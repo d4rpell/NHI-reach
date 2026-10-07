@@ -2,6 +2,8 @@ module github.com/d4rpell/nhi-reach
 
 go 1.23
 
+toolchain go1.25.13
+
 require (
 	github.com/spf13/cobra v1.10.2
 	gopkg.in/yaml.v3 v3.0.1

@@ -17,9 +17,19 @@ jobs:
         with:
           go-version: "1.23"
           cache: true
+      # GOTOOLCHAIN=local makes these steps build and test on the go 1.23
+      # toolchain this job installs, ignoring the go.mod `toolchain` directive:
+      # that is what validates the minimum go.mod declares. The default build
+      # (local dev and releases) uses the patched toolchain the directive pins.
       - run: go build ./...
+        env:
+          GOTOOLCHAIN: local
       - run: go vet ./...
+        env:
+          GOTOOLCHAIN: local
       - run: go test -race ./...
+        env:
+          GOTOOLCHAIN: local
 
   lint:
     runs-on: ubuntu-latest
@@ -31,6 +41,8 @@ jobs:
       - uses: golangci/golangci-lint-action@v9
         with:
           version: v2.14.0
+        env:
+          GOTOOLCHAIN: local
 
   vulncheck:
     runs-on: ubuntu-latest
@@ -39,13 +51,15 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           # govulncheck reports the standard-library advisories of the toolchain
-          # it runs on, so this job pins the toolchain itself: the os fix for
-          # GO-2026-4602 (CVE-2026-27139) is available in the 1.25 line from
-          # go1.25.8 on and has no backport to the 1.23 or 1.24 lines. The other
-          # jobs keep building and testing on go 1.23, the minimum go.mod
-          # declares: those checks validate compatibility, not the absence of
-          # vulnerabilities in the Go 1.23 standard library.
-          go-version: "1.25.8"
+          # it runs on, so this job pins the toolchain itself, at the same
+          # patched release go.mod's `toolchain` directive pins for the build.
+          # Two families need it: the os fix for GO-2026-4602 (CVE-2026-27139,
+          # in the 1.25 line from go1.25.8, no backport to 1.23/1.24) and the
+          # html/template XSS and regexp-context fixes (GO-2026-4865/4980/4982/
+          # 6091) that became reachable when the HTML report started calling
+          # html/template; all four are fixed by go1.25.13 and have no 1.23/1.24
+          # backport, which is why the build toolchain is pinned too.
+          go-version: "1.25.13"
       # Pinned on purpose: an unversioned @latest broke this job once, when a
       # new release raised its own toolchain requirement (commit 954caa6).
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...

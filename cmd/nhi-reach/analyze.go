@@ -11,6 +11,7 @@ import (
 	"github.com/d4rpell/nhi-reach/internal/model"
 	"github.com/d4rpell/nhi-reach/internal/report"
 	"github.com/d4rpell/nhi-reach/internal/snapshot"
+	"github.com/d4rpell/nhi-reach/internal/version"
 	"github.com/spf13/cobra"
 )
 
@@ -46,10 +47,11 @@ func newAnalyzeCmd() *cobra.Command {
 		Use:   "analyze",
 		Short: "Trace escalation paths from non-human identities to privileged targets",
 		Long: "Trace escalation paths from non-human identities to privileged targets.\n" +
-			"This version reads an offline snapshot and renders a table or the versioned\n" +
-			"JSON schema:\n\n" +
+			"This version reads an offline snapshot and renders a table, the versioned\n" +
+			"JSON schema or a self-contained HTML report:\n\n" +
 			"  nhi-reach analyze --from DIR -o table\n" +
-			"  nhi-reach analyze --from DIR -o json --out report.json",
+			"  nhi-reach analyze --from DIR -o json --out report.json\n" +
+			"  nhi-reach analyze --from DIR -o html --out report.html",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return runAnalyze(cmd.OutOrStdout(), opts)
 		},
@@ -58,7 +60,7 @@ func newAnalyzeCmd() *cobra.Command {
 	f := cmd.Flags()
 	f.StringVar(&opts.fromDir, "from", "", "directory holding a snapshot written by `nhi-reach snapshot`")
 	f.BoolVar(&opts.live, "live", false, "analyze a live cluster (read-only: get/list only)")
-	f.StringVarP(&opts.output, "output", "o", "table", "output format: table|json")
+	f.StringVarP(&opts.output, "output", "o", "table", "output format: table|json|html")
 	f.StringVar(&opts.outFile, "out", "", "write the report to FILE instead of stdout")
 	f.IntVar(&opts.maxDepth, "max-depth", graph.DefaultMaxDepth, "maximum hop depth")
 	f.IntVar(&opts.pathsPerPair, "paths-per-pair", graph.DefaultPathsPerPair, "maximum number of paths reported per origin/target pair")
@@ -252,10 +254,20 @@ func toGapViews(gaps []model.Gap) []report.GapView {
 
 // emitReport renders the report to --out or to w and applies --fail-on.
 func emitReport(w io.Writer, opts analyzeOptions, rep report.Report) error {
+	var htmlOpts report.HTMLOptions
+	if opts.output == "html" {
+		var err error
+		if htmlOpts, err = buildHTMLOptions(); err != nil {
+			return exitf(3, "%v", err)
+		}
+	}
+
 	render := func(dst io.Writer) error {
 		switch opts.output {
 		case "json":
 			return report.JSON(dst, rep)
+		case "html":
+			return report.HTML(dst, rep, htmlOpts)
 		default:
 			return report.Table(dst, rep)
 		}
@@ -287,6 +299,28 @@ func emitReport(w io.Writer, opts analyzeOptions, rep report.Report) error {
 	return nil
 }
 
+// buildHTMLOptions collects what the HTML renderer needs: the build metadata and
+// the official reference of every catalog hop. An unreadable catalog is an input
+// error, never a report rendered without references.
+func buildHTMLOptions() (report.HTMLOptions, error) {
+	entries, err := hops.Catalog()
+	if err != nil {
+		return report.HTMLOptions{}, err
+	}
+	opts := report.HTMLOptions{
+		Tool: report.ToolInfo{
+			Version:       version.Version,
+			Commit:        version.Commit,
+			Date:          version.Date,
+			CatalogSHA256: hops.CatalogSHA256(),
+		},
+	}
+	for _, entry := range entries {
+		opts.References = append(opts.References, report.HopReference{ID: entry.ID, Reference: entry.Reference})
+	}
+	return opts, nil
+}
+
 // validateOptions rejects, with exit code 3, the flags whose behaviour this
 // version does not implement and the values it cannot interpret. Silently
 // ignoring them would misreport the analysis.
@@ -297,9 +331,7 @@ func validateOptions(opts analyzeOptions) error {
 	case opts.fromDir == "":
 		return exitf(3, "--from DIR is required")
 	case opts.output != "table" && opts.output != "json" && opts.output != "html":
-		return exitf(3, "-o %s is not supported; expected table or json", opts.output)
-	case opts.output == "html":
-		return exitf(3, "-o html is not supported in this version")
+		return exitf(3, "-o %s is not supported; expected table, json or html", opts.output)
 	case opts.maxDepth < 1:
 		return exitf(3, "--max-depth must be at least 1")
 	case opts.pathsPerPair < 1:

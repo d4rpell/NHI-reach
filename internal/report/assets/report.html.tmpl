@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>nhi-reach report</title>
+<style>
+:root {
+  --bg: #ffffff; --fg: #1b1f24; --muted: #57606a; --line: #d0d7de;
+  --app: #0969da; --system: #8250df; --target: #cf222e; --workload: #1a7f37;
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; padding: 1.5rem; background: var(--bg); color: var(--fg);
+  font: 14px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+h1 { font-size: 1.3rem; margin: 0 0 .5rem; }
+h2 { font-size: 1.05rem; margin: 1.5rem 0 .5rem; border-bottom: 1px solid var(--line); padding-bottom: .25rem; }
+h3 { font-size: .95rem; margin: 1rem 0 .5rem; }
+h4 { font-size: .9rem; margin: 0 0 .25rem; }
+code, .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+.notice { color: var(--muted); margin: 0 0 .75rem; }
+.summary { list-style: none; display: flex; gap: 1.25rem; padding: 0; margin: 0 0 1rem; flex-wrap: wrap; }
+.summary li { color: var(--muted); }
+.summary b { color: var(--fg); }
+.legend { list-style: none; display: flex; gap: 1rem; padding: 0; margin: 0 0 .5rem; flex-wrap: wrap; }
+.legend li { display: flex; align-items: center; gap: .35rem; color: var(--muted); }
+.swatch { width: .8rem; height: .8rem; border-radius: 50%; display: inline-block; }
+.swatch.app { background: var(--app); }
+.swatch.system { background: var(--system); }
+.swatch.target { background: var(--target); }
+.swatch.workload { background: var(--workload); }
+#graph { width: 100%; height: 26rem; border: 1px solid var(--line); border-radius: 6px; }
+.path { border: 1px solid var(--line); border-radius: 6px; padding: .75rem; margin: 0 0 .75rem; }
+.meta { color: var(--muted); margin: 0 0 .5rem; }
+.route { margin: .25rem 0 .5rem; padding-left: 1.25rem; }
+.route li { margin: .35rem 0; }
+.hop { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; background: #f6f8fa; border: 1px solid var(--line); border-radius: 4px; padding: 0 .3rem; font-size: .85em; }
+.conf { color: var(--muted); font-size: .9em; }
+.evidence { list-style: none; padding-left: .75rem; margin: .25rem 0 0; color: var(--muted); }
+.evidence li { font-size: .9em; }
+table { border-collapse: collapse; width: 100%; margin: .25rem 0 0; }
+th, td { border: 1px solid var(--line); padding: .3rem .5rem; text-align: left; vertical-align: top; font-size: .9em; }
+th { background: #f6f8fa; font-weight: 600; }
+.verified { color: var(--workload); font-weight: 600; }
+.unverified { color: var(--target); font-weight: 600; }
+.empty { color: var(--muted); font-style: italic; }
+footer { margin-top: 2rem; border-top: 1px solid var(--line); padding-top: .75rem; }
+footer dl { display: grid; grid-template-columns: max-content 1fr; gap: .15rem 1rem; margin: 0; }
+footer dt { color: var(--muted); }
+footer dd { margin: 0; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .85em; word-break: break-all; }
+</style>
+</head>
+<body>
+<header>
+  <h1>nhi-reach &mdash; escalation paths from non-human identities</h1>
+  <p class="notice">Every claim holds in the model and up to <code>--max-depth</code> only; nothing here is a guarantee about a real cluster.</p>
+  <ul class="summary">
+    <li>paths: <b>{{len .Report.Paths}}</b></li>
+    <li>cover complete: <b>{{yesno .Report.CoverComplete}}</b></li>
+    <li>targets: <b>{{range $i, $t := .Report.Params.Targets}}{{if $i}}, {{end}}{{$t}}{{end}}</b></li>
+    <li>max depth: <b>{{.Report.Params.MaxDepth}}</b></li>
+    <li>paths per pair: <b>{{.Report.Params.PathsPerPair}}</b></li>
+  </ul>
+</header>
+
+{{if .Report.Paths}}
+<section id="graph-section">
+  <h2>Graph</h2>
+  <ul class="legend">
+    <li><span class="swatch app"></span>application identity</li>
+    <li><span class="swatch system"></span>system identity</li>
+    <li><span class="swatch workload"></span>workload</li>
+    <li><span class="swatch target"></span>target</li>
+  </ul>
+  <div id="graph"></div>
+  <p class="notice">The graph is drawn with JavaScript; the rest of the report does not need it.</p>
+</section>
+{{end}}
+
+<section id="paths">
+  <h2>Paths</h2>
+  {{if not .Report.Paths}}<p class="empty">no escalation paths found</p>{{end}}
+  {{range .Groups}}
+    <h3>target: {{label .Target}}</h3>
+    {{range .App}}{{template "pathCard" .}}{{end}}
+    {{if .System}}
+      <h4>system origins</h4>
+      {{range .System}}{{template "pathCard" .}}{{end}}
+    {{end}}
+  {{end}}
+</section>
+
+{{if .Report.Bottlenecks}}
+<section id="bottlenecks">
+  <h2>Bottlenecks</h2>
+  <ul>
+    {{range .Report.Bottlenecks}}
+    <li>{{.Change}}
+      {{if .Eliminated}}<ul>{{range .Eliminated}}<li>{{label .Source}} &rarr; {{label .Target}}</li>{{end}}</ul>{{end}}
+    </li>
+    {{end}}
+  </ul>
+</section>
+{{end}}
+
+{{if .Report.Gaps}}
+<section id="gaps">
+  <h2>Gaps</h2>
+  <ul>
+    {{range .Report.Gaps}}<li><strong>{{.Subject}}</strong>: {{.Message}} <span class="conf">({{.Kind}})</span></li>{{end}}
+  </ul>
+</section>
+{{end}}
+
+<footer>
+  <h2>Run</h2>
+  <dl>
+    <dt>schema_version</dt><dd>{{.Report.SchemaVersion}}</dd>
+    <dt>from_identity</dt><dd>{{if .Report.Params.FromIdentity}}{{.Report.Params.FromIdentity}}{{else}}-{{end}}</dd>
+    <dt>include_system</dt><dd>{{yesno .Report.Params.IncludeSystem}}</dd>
+    <dt>system_namespaces</dt><dd>{{range $i, $n := .Report.Params.SystemNamespaces}}{{if $i}}, {{end}}{{$n}}{{end}}</dd>
+    <dt>sensitive_namespaces</dt><dd>{{range $i, $n := .Report.Params.SensitiveNamespaces}}{{if $i}}, {{end}}{{$n}}{{end}}</dd>
+    <dt>input_manifest_sha256</dt><dd>{{.Report.InputManifestSHA256}}</dd>
+    <dt>rules_catalog_sha256</dt><dd>{{.Report.RulesCatalogSHA256}}</dd>
+    <dt>tool_version</dt><dd>{{.Tool.Version}}</dd>
+    <dt>tool_commit</dt><dd>{{.Tool.Commit}}</dd>
+    <dt>tool_date</dt><dd>{{.Tool.Date}}</dd>
+    <dt>tool_catalog_sha256</dt><dd>{{.Tool.CatalogSHA256}}</dd>
+  </dl>
+</footer>
+
+<script id="nhi-reach-graph" type="application/json">{{.Graph}}</script>
+<script>{{.Asset}}</script>
+<script>
+(function () {
+  var el = document.getElementById('graph');
+  var payload = document.getElementById('nhi-reach-graph');
+  if (!el || !payload || typeof cytoscape !== 'function') { return; }
+  var data = JSON.parse(payload.textContent);
+  if (!data.nodes || data.nodes.length === 0) { return; }
+  cytoscape({
+    container: el,
+    elements: data.nodes.map(function (n) {
+      return { data: { id: n.id, label: n.label, kind: n.kind } };
+    }).concat(data.edges.map(function (e) {
+      return { data: { id: e.from + '|' + e.to + '|' + e.hop_id, source: e.from, target: e.to, hop: e.hop_id, confidence: e.confidence } };
+    })),
+    style: [
+      { selector: 'node', style: {
+        'label': 'data(label)', 'font-size': 9, 'text-valign': 'center', 'text-halign': 'center',
+        'color': '#1b1f24', 'text-wrap': 'wrap', 'text-max-width': '80px',
+        'background-color': '#0969da', 'width': 14, 'height': 14, 'font-family': 'monospace' } },
+      { selector: 'node[kind = "system"]', style: { 'background-color': '#8250df' } },
+      { selector: 'node[kind = "workload"]', style: { 'background-color': '#1a7f37' } },
+      { selector: 'node[kind = "target"]', style: { 'background-color': '#cf222e', 'shape': 'round-rectangle', 'width': 22, 'height': 18 } },
+      { selector: 'edge', style: {
+        'width': 1.5, 'line-color': '#8c959f', 'target-arrow-color': '#8c959f', 'target-arrow-shape': 'triangle',
+        'curve-style': 'bezier', 'label': 'data(hop)', 'font-size': 8, 'color': '#57606a', 'text-rotation': 'autorotate' } },
+      { selector: 'edge[confidence = "conditional"]', style: { 'line-style': 'dashed' } }
+    ],
+    layout: { name: 'breadthfirst', directed: true, spacingFactor: 1.1, animate: false, padding: 12 },
+    wheelSensitivity: 0.2
+  });
+})();
+</script>
+</body>
+</html>
+
+{{define "pathCard"}}
+<article class="path">
+  <h4>{{label .Path.Source}} &rarr; {{label .Path.Target}}</h4>
+  <p class="meta">hops: {{.Path.Hops}} &middot; confidence: {{.Path.Confidence}} &middot; via system: {{yesno .Path.ViaSystem}}</p>
+  <ol class="route">
+    {{range .Path.Route}}
+    <li>
+      <span class="hop">{{.HopID}}</span>
+      {{label .From}} &rarr; {{label .To}}
+      <span class="conf">{{.Confidence}}</span>
+      {{with index $.Refs .HopID}}<a href="{{.}}">official reference</a>{{end}}
+      {{if .Evidence}}
+      <ul class="evidence">
+        {{range .Evidence}}<li>{{.Kind}} {{.Namespace}}/{{.Name}} <code>{{short .SHA256}}</code></li>{{end}}
+      </ul>
+      {{end}}
+    </li>
+    {{end}}
+  </ol>
+  {{if .Cuts}}
+  <table class="cuts">
+    <thead><tr><th>cut</th><th>verified</th><th>remaining paths</th></tr></thead>
+    <tbody>
+      {{range .Cuts}}
+      <tr>
+        <td>{{.Change}}</td>
+        <td>{{if .Verified}}<span class="verified">verified</span>{{else}}<span class="unverified">unverified</span>{{end}}</td>
+        <td>{{.RemainingPaths}}</td>
+      </tr>
+      {{end}}
+    </tbody>
+  </table>
+  {{end}}
+</article>
+{{end}}

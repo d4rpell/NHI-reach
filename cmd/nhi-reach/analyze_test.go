@@ -286,8 +286,108 @@ func TestAnalyzeOutWriteFailureExitsWith1(t *testing.T) {
 	}
 }
 
+func TestAnalyzeHTMLGolden(t *testing.T) {
+	opts := baseOptions()
+	opts.fromDir = filepath.Join(fixtureRoot, "hit")
+	opts.output = "html"
+
+	got, err := run(t, opts)
+	if err != nil {
+		t.Fatalf("analyze: %v", err)
+	}
+	checkGolden(t, "hit.html", got)
+
+	// No external resource, the asset inline, and the report content present.
+	for _, marker := range []string{"<script src", "<link", "@import", "url(http", "<iframe", "<img"} {
+		if strings.Contains(got, marker) {
+			t.Errorf("the HTML report references an external resource through %q", marker)
+		}
+	}
+	if !strings.Contains(got, "3.30.2") {
+		t.Errorf("the HTML report does not inline the graph library")
+	}
+	for _, want := range []string{"app/deployer", "app/ops-admin", "NR-001", "rbac-cluster-admin", "official reference"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the HTML report does not mention %q", want)
+		}
+	}
+}
+
+func TestAnalyzeHTMLNeverLeaksSecretValues(t *testing.T) {
+	opts := baseOptions()
+	opts.fromDir = filepath.Join(fixtureRoot, "hit")
+	opts.output = "html"
+
+	got, err := run(t, opts)
+	if err != nil {
+		t.Fatalf("analyze: %v", err)
+	}
+	// These decoy values are present in the fixture input, so the check is not
+	// vacuous.
+	for _, leak := range []string{"c3VwZXItc2VjcmV0LWRvY2tlcmNvbmZpZw==", "PLAINTEXT-BACKUP-TOKEN", ".dockerconfigjson"} {
+		if strings.Contains(got, leak) {
+			t.Errorf("the HTML report leaks secret material %q", leak)
+		}
+	}
+}
+
+func TestAnalyzeHTMLOutWritesFileAndExitsZero(t *testing.T) {
+	opts := baseOptions()
+	opts.fromDir = filepath.Join(fixtureRoot, "hit")
+	opts.output = "html"
+	opts.outFile = filepath.Join(t.TempDir(), "report.html")
+
+	var buf bytes.Buffer
+	if err := runAnalyze(&buf, opts); err != nil {
+		t.Fatalf("analyze: %v", err)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("--out also wrote to stdout: %q", buf.String())
+	}
+	data, err := os.ReadFile(opts.outFile)
+	if err != nil {
+		t.Fatalf("read --out file: %v", err)
+	}
+	if !strings.HasPrefix(string(data), "<!doctype html>") {
+		t.Errorf("the --out file is not the HTML report:\n%s", string(data)[:min(len(data), 200)])
+	}
+}
+
+func TestAnalyzeHTMLFailOnAnyExitsWith2(t *testing.T) {
+	opts := baseOptions()
+	opts.fromDir = filepath.Join(fixtureRoot, "hit")
+	opts.output = "html"
+	opts.failOn = "any"
+
+	got, err := run(t, opts)
+	if err == nil {
+		t.Fatal("--fail-on any did not fail on a snapshot with paths")
+	}
+	if code := exitCode(err); code != 2 {
+		t.Errorf("exit code %d, want 2: %v", code, err)
+	}
+	if !strings.Contains(got, "app/deployer") {
+		t.Errorf("the HTML report was not written before failing")
+	}
+}
+
+func TestAnalyzeHTMLOutWriteFailureExitsWith1(t *testing.T) {
+	opts := baseOptions()
+	opts.fromDir = filepath.Join(fixtureRoot, "hit")
+	opts.output = "html"
+	opts.outFile = filepath.Join(t.TempDir(), "missing", "report.html")
+
+	_, err := run(t, opts)
+	if err == nil {
+		t.Fatal("analyze accepted an unwritable --out path")
+	}
+	if code := exitCode(err); code != 1 {
+		t.Errorf("exit code %d, want 1: %v", code, err)
+	}
+}
+
 func TestAnalyzeIsDeterministicAcrossItemOrder(t *testing.T) {
-	for _, output := range []string{"table", "json"} {
+	for _, output := range []string{"table", "json", "html"} {
 		t.Run(output, func(t *testing.T) {
 			first := filepath.Join(t.TempDir(), "first")
 			second := filepath.Join(t.TempDir(), "second")
@@ -358,7 +458,6 @@ func TestAnalyzeInputErrorsExitWith3(t *testing.T) {
 		{"live", func(o *analyzeOptions) { o.live = true; o.fromDir = hit }},
 		{"no --from", func(o *analyzeOptions) {}},
 		{"unknown output", func(o *analyzeOptions) { o.fromDir = hit; o.output = "yaml" }},
-		{"html output", func(o *analyzeOptions) { o.fromDir = hit; o.output = "html" }},
 		{"--max-depth 0", func(o *analyzeOptions) { o.fromDir = hit; o.maxDepth = 0 }},
 		{"--paths-per-pair 0", func(o *analyzeOptions) { o.fromDir = hit; o.pathsPerPair = 0 }},
 		{"--fail-on bogus", func(o *analyzeOptions) { o.fromDir = hit; o.failOn = "maybe" }},
