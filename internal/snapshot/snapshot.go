@@ -1,8 +1,12 @@
 // Package snapshot loads an offline snapshot directory into a read-only,
 // deterministic index of the input resources of spec §2.1.
 //
-// The loader strips Secret content (data/stringData) from every object as soon
-// as it is decoded, before the object is indexed, hashed or reported.
+// Secret content never survives the load: as soon as a decoded object is
+// identified as a Secret, the loader replaces it by the reconstruction of
+// sanitizeSecret, and only that representation is validated, indexed, hashed or
+// reported. The normalization of spec §2.2 (volatile metadata and status) is
+// applied before hashing, so two snapshots of the same configuration state
+// produce the same hashes.
 package snapshot
 
 import (
@@ -82,14 +86,28 @@ func New() *Index {
 	return &Index{byKind: map[string]map[string]*object{}, present: map[string]bool{}}
 }
 
-// Add indexes one decoded object under (kind, namespace, name) after computing
-// the hash of its canonical JSON.
-//
-// A Secret is replaced by the reduced representation of minimalSecret: only its
-// identity, apiVersion and type survive, so no other field of the original can
-// reach the index, the hash or the report. Any other object is indexed as
-// decoded and the caller's map is left untouched.
+// Add indexes one decoded object under (kind, namespace, name) after reducing
+// it to the representation that is allowed to be indexed: a Secret becomes the
+// reconstruction of sanitizeSecret, any other object loses the volatile fields
+// listed by spec §2.2. The hash is always that of the reduced representation.
+// The caller's map is never mutated.
 func (ix *Index) Add(raw map[string]any) error {
+	kind, _ := raw["kind"].(string)
+	if kind == "Secret" {
+		raw = sanitizeSecret(raw)
+	} else {
+		raw = normalized(raw)
+	}
+	return ix.index(raw)
+}
+
+// index validates one already-reduced object and stores it under (kind,
+// namespace, name) with the hash of its canonical JSON. It is the single write
+// path of the index: Add and Load both reach it only after reducing the object
+// — Secrets rebuilt from an explicit field list, everything else stripped of
+// volatile fields — so no code path can index a representation that was not
+// reduced first.
+func (ix *Index) index(raw map[string]any) error {
 	kind, _ := raw["kind"].(string)
 	if kind == "" {
 		return fmt.Errorf("object without kind")
@@ -107,10 +125,6 @@ func (ix *Index) Add(raw map[string]any) error {
 		return fmt.Errorf("%s %s is missing metadata.namespace", kind, name)
 	}
 	apiVersion, _ := raw["apiVersion"].(string)
-
-	if kind == "Secret" {
-		raw = minimalSecret(apiVersion, name, namespace, raw)
-	}
 
 	canonical, err := json.Marshal(raw)
 	if err != nil {
@@ -139,6 +153,22 @@ func (ix *Index) Add(raw map[string]any) error {
 	return nil
 }
 
+// sanitizeSecret rebuilds a decoded Secret from scratch: only the fields of
+// minimalSecret survive, so no other field of the original — neither a value
+// nor a serialized copy of the object — can reach the index or the hash. It
+// never trusts the input, not even a dataKeys field: the list is always
+// recomputed from data/stringData.
+func sanitizeSecret(raw map[string]any) map[string]any {
+	meta, _ := raw["metadata"].(map[string]any)
+	var name, namespace string
+	if meta != nil {
+		name, _ = meta["name"].(string)
+		namespace, _ = meta["namespace"].(string)
+	}
+	apiVersion, _ := raw["apiVersion"].(string)
+	return minimalSecret(apiVersion, name, namespace, raw)
+}
+
 // minimalSecret builds the whole representation a Secret is allowed to have
 // here: only the fields below, copied explicitly by name. Every other field of
 // the original object is discarded, so neither a value nor a serialized copy of
@@ -146,8 +176,11 @@ func (ix *Index) Add(raw map[string]any) error {
 // kubectl.kubernetes.io/last-applied-configuration — can reach the index or the
 // hash.
 //
-// The data-key names of spec §2.1 are not retained yet; they belong to the
-// snapshot normalization of T1-01, which the secrets target of T1-02 consumes.
+// The names of the keys of data/stringData are kept (spec §2.1: "solo
+// metadatos, tipo y nombres de clave") as dataKeys, sorted ascending with Go
+// string comparison and free of duplicates; the values behind them are never
+// used to build the index, the hashes or the report. When there are no keys the
+// field is omitted: absence means zero keys.
 func minimalSecret(apiVersion, name, namespace string, raw map[string]any) map[string]any {
 	reduced := map[string]any{
 		"kind":     "Secret",
@@ -159,7 +192,67 @@ func minimalSecret(apiVersion, name, namespace string, raw map[string]any) map[s
 	if secretType, ok := raw["type"].(string); ok {
 		reduced["type"] = secretType
 	}
+	if keys := dataKeyNames(raw); len(keys) > 0 {
+		reduced["dataKeys"] = keys
+	}
 	return reduced
+}
+
+// dataKeyNames returns the sorted, de-duplicated names of the keys of
+// data/stringData. It reads key names only, never values.
+func dataKeyNames(raw map[string]any) []string {
+	seen := map[string]bool{}
+	var names []string
+	for _, field := range SecretContentKeys {
+		entries, ok := raw[field].(map[string]any)
+		if !ok {
+			continue
+		}
+		for name := range entries {
+			if !seen[name] {
+				seen[name] = true
+				names = append(names, name)
+			}
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+// strippedMetadataKeys are the metadata fields spec §2.2 removes before
+// hashing: they differ between two reads of the same configuration state.
+var strippedMetadataKeys = []string{
+	"creationTimestamp",
+	"generation",
+	"managedFields",
+	"resourceVersion",
+	"uid",
+}
+
+// normalized returns a shallow copy of raw without the volatile fields of spec
+// §2.2 (metadata.managedFields, resourceVersion, uid, generation,
+// creationTimestamp and the whole status). The equivalence it buys is scoped to
+// this list: a field kept here — notably the last-applied-configuration
+// annotation — still affects the hash when it differs between two exports.
+func normalized(raw map[string]any) map[string]any {
+	out := make(map[string]any, len(raw))
+	for k, v := range raw {
+		if k == "status" {
+			continue
+		}
+		out[k] = v
+	}
+	if meta, ok := raw["metadata"].(map[string]any); ok {
+		metaCopy := make(map[string]any, len(meta))
+		for k, v := range meta {
+			metaCopy[k] = v
+		}
+		for _, k := range strippedMetadataKeys {
+			delete(metaCopy, k)
+		}
+		out["metadata"] = metaCopy
+	}
+	return out
 }
 
 // Entry returns the reference and the normalized object of one object. Secret
@@ -207,9 +300,107 @@ func (ix *Index) Gaps() []model.Gap {
 // its items or through a conventionally named empty list file.
 func (ix *Index) HasKind(kind string) bool { return ix.present[kind] }
 
-// Load reads every *.json file of dir (except manifest.json), indexes the
-// objects it holds and records a Gap for each missing optional resource type.
-// It fails when a required type of spec §2.1 is absent.
+// ManifestSchema identifies the manifest.json format of WriteFile.
+const ManifestSchema = "nhi-reach/snapshot-manifest/v1"
+
+// SnapshotObject is one entry of Manifest.Objects. Its JSON encoding is part of
+// the manifest contract: field names and order are fixed and namespace is
+// always present, even when empty.
+type SnapshotObject struct {
+	APIVersion string `json:"apiVersion"`
+	Kind       string `json:"kind"`
+	Namespace  string `json:"namespace"`
+	Name       string `json:"name"`
+	SHA256     string `json:"sha256"`
+}
+
+// Manifest is the inventory of a snapshot: every normalized object with its
+// canonical hash, plus the hash of that inventory. The snapshot hash identifies
+// only the set of normalized objects: it does not attest coverage of the
+// resource types, the absence of Gaps or the byte-level integrity of the
+// directory.
+type Manifest struct {
+	Schema  string           `json:"schema"`
+	Objects []SnapshotObject `json:"objects"`
+	SHA256  string           `json:"snapshot_sha256"`
+}
+
+// preimage returns the exact bytes the snapshot hash is computed over: the
+// compact JSON of {"objects":[...]} with no trailing newline, excluding schema
+// and snapshot_sha256. Field order is fixed by the struct definitions; Go
+// escapes <, > and & in strings.
+func (m Manifest) preimage() ([]byte, error) {
+	return json.Marshal(struct {
+		Objects []SnapshotObject `json:"objects"`
+	}{Objects: m.Objects})
+}
+
+func (m Manifest) digest() string {
+	pre, err := m.preimage()
+	if err != nil {
+		// Unreachable: preimage marshals plain strings and a struct slice.
+		panic(fmt.Sprintf("marshal manifest preimage: %v", err))
+	}
+	sum := sha256.Sum256(pre)
+	return hex.EncodeToString(sum[:])
+}
+
+// Manifest builds the manifest of the index. Objects are ordered by (kind,
+// namespace, name) with Go string comparison; Objects is never nil.
+func (ix *Index) Manifest() Manifest {
+	objects := make([]SnapshotObject, 0)
+	for _, byKey := range ix.byKind {
+		for _, o := range byKey {
+			r := o.ref
+			objects = append(objects, SnapshotObject{
+				APIVersion: r.APIVersion,
+				Kind:       r.Kind,
+				Namespace:  r.Namespace,
+				Name:       r.Name,
+				SHA256:     r.SHA256,
+			})
+		}
+	}
+	sort.Slice(objects, func(i, j int) bool {
+		a, b := objects[i], objects[j]
+		if a.Kind != b.Kind {
+			return a.Kind < b.Kind
+		}
+		if a.Namespace != b.Namespace {
+			return a.Namespace < b.Namespace
+		}
+		return a.Name < b.Name
+	})
+	m := Manifest{Schema: ManifestSchema, Objects: objects}
+	m.SHA256 = m.digest()
+	return m
+}
+
+// WriteFile writes manifest.json into dir with two-space indentation and a
+// trailing newline. It refuses to write a manifest with a foreign schema or one
+// whose snapshot hash does not match its own objects, so a stale or tampered
+// object list cannot be published. Load ignores the file; verifying a directory
+// against its manifest is the live mode's job (T2-04).
+func (m Manifest) WriteFile(dir string) error {
+	if m.Schema != ManifestSchema {
+		return fmt.Errorf("unsupported manifest schema %q, want %q", m.Schema, ManifestSchema)
+	}
+	if m.SHA256 != m.digest() {
+		return fmt.Errorf("manifest snapshot hash %s does not match its objects", m.SHA256)
+	}
+	data, err := json.MarshalIndent(m, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshal manifest: %w", err)
+	}
+	return os.WriteFile(filepath.Join(dir, "manifest.json"), append(data, '\n'), 0o644)
+}
+
+// Load reads every *.json file of dir (except manifest.json, which is an output
+// artifact of Manifest.WriteFile), indexes the objects it holds and records a
+// Gap for each missing optional resource type. It fails when a required type of
+// spec §2.1 is absent. Every object is reduced to its allowed representation
+// (Secrets rebuilt, everything else stripped of volatile fields) before any
+// validation looks at it, so no check runs on unsanitized content.
 func Load(dir string) (*Index, error) {
 	dirEntries, err := os.ReadDir(dir)
 	if err != nil {
@@ -239,6 +430,13 @@ func Load(dir string) (*Index, error) {
 		if err != nil {
 			return nil, err
 		}
+		for i, item := range items {
+			if kind, _ := item["kind"].(string); kind == "Secret" {
+				items[i] = sanitizeSecret(item)
+			} else {
+				items[i] = normalized(item)
+			}
+		}
 		if declaredByFile {
 			for _, item := range items {
 				if kind, _ := item["kind"].(string); kind != declared {
@@ -248,7 +446,7 @@ func Load(dir string) (*Index, error) {
 			ix.present[declared] = true
 		}
 		for _, item := range items {
-			if err := ix.Add(item); err != nil {
+			if err := ix.index(item); err != nil {
 				return nil, fmt.Errorf("%s: %w", name, err)
 			}
 		}

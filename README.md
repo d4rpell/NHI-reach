@@ -30,7 +30,7 @@ Estado de estas herramientas consultado el 2026-10-07 vía la API de GitHub: [Ku
 - **Offline primero**: analiza snapshots exportados; el modo live previsto usará únicamente `get`/`list`.
 - **Determinista**: mismo snapshot → misma salida, byte a byte (hoy la tabla; el JSON llega con T2-01).
 - **Evidence-first** (misma línea que Ariadne): cada arista lleva referencias a los objetos que la habilitan, con su hash.
-- **Nunca guarda valores de Secrets**: solo referencias (`ns/name` y `type`; los nombres de clave llegan con T1-01).
+- **Nunca guarda valores de Secrets**: solo metadatos, `type` y los nombres de clave de `data`/`stringData` ([reglas de evidencia](docs/evidence.md)).
 
 ## Uso (estado actual)
 
