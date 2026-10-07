@@ -5,7 +5,7 @@ BINARY  := $(BIN_DIR)/nhi-reach
 VERSION      ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 COMMIT       ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
 DATE         ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
-CATALOG_HASH ?= unknown
+CATALOG_HASH ?= $(shell command -v sha256sum >/dev/null 2>&1 && sha256sum internal/hops/catalog.yaml | cut -d ' ' -f1 || echo unknown)
 
 LDFLAGS := -s -w \
 	-X github.com/d4rpell/nhi-reach/internal/version.Version=$(VERSION) \

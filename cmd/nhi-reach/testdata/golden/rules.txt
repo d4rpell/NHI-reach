@@ -1,0 +1,7 @@
+ID      EFFECT    STATUS   TITLE                                                          REFERENCE
+NR-001  identity  enabled  Workload creation grants any service account of the namespace  https://kubernetes.io/docs/concepts/security/rbac-good-practices/#workload-creation
+NR-002  identity  enabled  Impersonation of a service account                             https://kubernetes.io/docs/concepts/security/rbac-good-practices/#impersonate-verb
+NR-003  identity  enabled  Token request for an existing service account                  https://kubernetes.io/docs/concepts/security/rbac-good-practices/#token-request
+NR-004  target    enabled  Binding a cluster role the identity does not hold              https://kubernetes.io/docs/concepts/security/rbac-good-practices/#bind-verb
+NR-005  target    enabled  Widening a cluster role already bound to the identity          https://kubernetes.io/docs/concepts/security/rbac-good-practices/#escalate-verb
+NR-006  target    enabled  Client certificate issued through the CSR API                  https://kubernetes.io/docs/concepts/security/rbac-good-practices/#csrs-and-certificate-issuing

@@ -165,6 +165,11 @@ func validateTargets(targets []string) error {
 
 // buildEdges runs every edge builder over every ServiceAccount of the snapshot.
 func buildEdges(ix *snapshot.Index) ([]model.Edge, error) {
+	privileged, err := rbac.PrivilegedSubjects(ix)
+	if err != nil {
+		return nil, exitf(3, "%v", err)
+	}
+
 	var edges []model.Edge
 	for _, sa := range ix.List("ServiceAccount", "") {
 		granted, err := rbac.Effective(ix, rbac.ServiceAccount(sa))
@@ -172,7 +177,16 @@ func buildEdges(ix *snapshot.Index) ([]model.Edge, error) {
 			return nil, exitf(3, "%v", err)
 		}
 		edges = append(edges, hops.ClusterAdminEdges(sa, granted)...)
-		edges = append(edges, hops.WorkloadCreation(ix, sa, granted)...)
+		catalogEdges, err := hops.CatalogEdges(hops.Context{
+			Index:      ix,
+			Identity:   sa,
+			Granted:    granted,
+			Privileged: privileged,
+		})
+		if err != nil {
+			return nil, exitf(3, "%v", err)
+		}
+		edges = append(edges, catalogEdges...)
 	}
 	sort.Slice(edges, func(i, j int) bool {
 		a, b := edges[i], edges[j]

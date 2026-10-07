@@ -73,7 +73,7 @@ type Rule struct {
 // restricts every request it authorizes to the listed instances, so Allows is
 // false whenever resourceNames is not empty.
 func (r Rule) Allows(apiGroup, resource, verb string) bool {
-	return len(r.ResourceNames) == 0 && r.matches(apiGroup, resource, verb)
+	return len(r.ResourceNames) == 0 && r.Matches(apiGroup, resource, verb)
 }
 
 // AllowsName reports whether the rule grants verb on the resource instance
@@ -82,7 +82,7 @@ func (r Rule) Allows(apiGroup, resource, verb string) bool {
 // metadata.name field selector such a request must carry; this query does not
 // attest that the real request carries it.
 func (r Rule) AllowsName(apiGroup, resource, name, verb string) bool {
-	if !r.matches(apiGroup, resource, verb) {
+	if !r.Matches(apiGroup, resource, verb) {
 		return false
 	}
 	if len(r.ResourceNames) == 0 {
@@ -91,11 +91,16 @@ func (r Rule) AllowsName(apiGroup, resource, name, verb string) bool {
 	return name != "" && contains(r.ResourceNames, name)
 }
 
-// matches reports whether the rule covers the (apiGroup, resource, verb)
-// triple, ignoring resourceNames. This implementation supports exact matches
-// and the "*" wildcard; a subresource such as "pods/log" is named explicitly,
-// so a rule listing "pods" does not cover it.
-func (r Rule) matches(apiGroup, resource, verb string) bool {
+// Matches reports whether the rule covers the (apiGroup, resource, verb)
+// triple, ignoring resourceNames. A caller that knows the request may target
+// whichever name it chooses — for instance a CSR it creates itself — uses this
+// to recognise that a rule restricted to some names is still usable, which
+// Allows cannot express.
+//
+// This implementation supports exact matches and the "*" wildcard; a
+// subresource such as "pods/log" is named explicitly, so a rule listing "pods"
+// does not cover it.
+func (r Rule) Matches(apiGroup, resource, verb string) bool {
 	return has(r.APIGroups, apiGroup) && has(r.Resources, resource) && has(r.Verbs, verb)
 }
 
@@ -158,17 +163,9 @@ func Effective(ix *snapshot.Index, p Principal) ([]Granted, error) {
 		if len(matched) == 0 {
 			continue
 		}
-		roleRef, _ := obj["roleRef"].(map[string]any)
-		roleKind, _ := roleRef["kind"].(string)
-		roleName, _ := roleRef["name"].(string)
-		roleNamespace := ""
-		if roleKind == "Role" {
-			roleNamespace = binding.Namespace
-		}
-		roleObj, role, ok := ix.Entry(roleKind, roleNamespace, roleName)
-		if !ok {
-			return nil, fmt.Errorf("binding %s %s/%s references missing %s %s/%s",
-				binding.Kind, binding.Namespace, binding.Name, roleKind, roleNamespace, roleName)
+		roleObj, role, err := roleRefOf(ix, binding, obj)
+		if err != nil {
+			return nil, err
 		}
 
 		rules, _ := role["rules"].([]any)
@@ -218,6 +215,194 @@ func Effective(ix *snapshot.Index, p Principal) ([]Granted, error) {
 		return a.Grants[0].Detail < b.Grants[0].Detail
 	})
 	return out, nil
+}
+
+// BindingRef is a binding that names a principal, together with the role it
+// references. The roleRef is resolved the same way Effective resolves it, so a
+// dangling reference is reported here too instead of being skipped.
+type BindingRef struct {
+	Object model.ObjectRef // the RoleBinding or ClusterRoleBinding
+	Role   model.ObjectRef // the Role or ClusterRole it applies
+}
+
+// Bindings returns the bindings that name p as a subject, ordered by (kind,
+// namespace, name). It reuses the subject matching of Effective, so a binding
+// that matches through several subjects is returned once. Unlike Effective it
+// does not depend on the referenced role having rules: a rule-less ClusterRole
+// bound to p is still reported, which lets a caller see that the role already
+// reaches the principal.
+func Bindings(ix *snapshot.Index, p Principal) ([]BindingRef, error) {
+	bindings := ix.List("RoleBinding", "")
+	bindings = append(bindings, ix.List("ClusterRoleBinding", "")...)
+
+	var out []BindingRef
+	for _, binding := range bindings {
+		_, obj, ok := ix.Entry(binding.Kind, binding.Namespace, binding.Name)
+		if !ok {
+			continue
+		}
+		subjects, _ := obj["subjects"].([]any)
+		if len(matchedSubjects(subjects, p)) == 0 {
+			continue
+		}
+		role, _, err := roleRefOf(ix, binding, obj)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, BindingRef{Object: binding, Role: role})
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i].Object, out[j].Object
+		if a.Kind != b.Kind {
+			return a.Kind < b.Kind
+		}
+		if a.Namespace != b.Namespace {
+			return a.Namespace < b.Namespace
+		}
+		return a.Name < b.Name
+	})
+	return out, nil
+}
+
+// PrivilegedSubject is a User or Group bound by a ClusterRoleBinding to a
+// ClusterRole whose rules are equivalent to "*/*/*". Evidence lists the
+// ClusterRoleBinding and the ClusterRole that justify it.
+type PrivilegedSubject struct {
+	Principal Principal
+	Evidence  []model.ObjectRef
+}
+
+// PrivilegedSubjects returns the User and Group subjects, other than
+// system:masters, that a ClusterRoleBinding binds to a cluster-admin equivalent
+// ClusterRole. system:masters is excluded because the CertificateSubject
+// Restriction admission plugin restricts it by default, so a client certificate
+// for it is not an admissible escalation.
+//
+// It is the primitive NR-006's condition consumes (D-023). Results are ordered
+// by (Kind, Name); a subject named by several bindings is returned once with
+// every justifying object, ordered by (kind, namespace, name).
+func PrivilegedSubjects(ix *snapshot.Index) ([]PrivilegedSubject, error) {
+	var out []PrivilegedSubject
+	index := map[Principal]int{}
+
+	for _, binding := range ix.List("ClusterRoleBinding", "") {
+		_, obj, ok := ix.Entry("ClusterRoleBinding", "", binding.Name)
+		if !ok {
+			continue
+		}
+		role, roleObj, err := roleRefOf(ix, binding, obj)
+		if err != nil {
+			return nil, err
+		}
+		if role.Kind != "ClusterRole" {
+			continue
+		}
+		if !RulesAreClusterAdmin(ParseRules(roleObj)) {
+			continue
+		}
+
+		subjects, _ := obj["subjects"].([]any)
+		for _, raw := range subjects {
+			subject, ok := raw.(map[string]any)
+			if !ok {
+				continue
+			}
+			kind, _ := subject["kind"].(string)
+			name, _ := subject["name"].(string)
+			if (kind != "User" && kind != "Group") || name == "" || name == "system:masters" {
+				continue
+			}
+			p := Principal{Kind: kind, Name: name}
+			evidence := []model.ObjectRef{binding, role}
+			if at, seen := index[p]; seen {
+				out[at].Evidence = append(out[at].Evidence, evidence...)
+				continue
+			}
+			index[p] = len(out)
+			out = append(out, PrivilegedSubject{Principal: p, Evidence: evidence})
+		}
+	}
+
+	for i := range out {
+		out[i].Evidence = dedupeRefs(out[i].Evidence)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Principal.Kind != out[j].Principal.Kind {
+			return out[i].Principal.Kind < out[j].Principal.Kind
+		}
+		return out[i].Principal.Name < out[j].Principal.Name
+	})
+	return out, nil
+}
+
+// roleRefOf resolves the role a binding references, returning both its
+// reference and its object. A Role is resolved inside the binding's namespace;
+// a dangling reference is an input defect, not a silent skip.
+func roleRefOf(ix *snapshot.Index, binding model.ObjectRef, obj map[string]any) (model.ObjectRef, map[string]any, error) {
+	roleRef, _ := obj["roleRef"].(map[string]any)
+	roleKind, _ := roleRef["kind"].(string)
+	roleName, _ := roleRef["name"].(string)
+	roleNamespace := ""
+	if roleKind == "Role" {
+		roleNamespace = binding.Namespace
+	}
+	roleObj, role, ok := ix.Entry(roleKind, roleNamespace, roleName)
+	if !ok {
+		return model.ObjectRef{}, nil, fmt.Errorf("binding %s %s/%s references missing %s %s/%s",
+			binding.Kind, binding.Namespace, binding.Name, roleKind, roleNamespace, roleName)
+	}
+	return roleObj, role, nil
+}
+
+// ParseRules extracts the rules of a Role or ClusterRole object. It reuses the
+// rule parser of Effective, so a caller that must judge a role object directly
+// does not re-implement it.
+func ParseRules(role map[string]any) []Rule {
+	raw, _ := role["rules"].([]any)
+	rules := make([]Rule, 0, len(raw))
+	for _, item := range raw {
+		if m, ok := item.(map[string]any); ok {
+			rules = append(rules, parseRule(m))
+		}
+	}
+	return rules
+}
+
+// RulesAreClusterAdmin reports whether any rule grants an unrestricted
+// "*/*/*", which is the equivalence ClusterAdminGrants applies to a granted
+// rule.
+func RulesAreClusterAdmin(rules []Rule) bool {
+	for _, r := range rules {
+		if r.Allows("*", "*", "*") {
+			return true
+		}
+	}
+	return false
+}
+
+func dedupeRefs(refs []model.ObjectRef) []model.ObjectRef {
+	seen := map[string]bool{}
+	out := make([]model.ObjectRef, 0, len(refs))
+	for _, ref := range refs {
+		key := ref.Kind + "\x00" + ref.Namespace + "\x00" + ref.Name
+		if seen[key] {
+			continue
+		}
+		seen[key] = true
+		out = append(out, ref)
+	}
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if a.Kind != b.Kind {
+			return a.Kind < b.Kind
+		}
+		if a.Namespace != b.Namespace {
+			return a.Namespace < b.Namespace
+		}
+		return a.Name < b.Name
+	})
+	return out
 }
 
 // IsClusterAdmin reports whether the effective permissions are equivalent to
