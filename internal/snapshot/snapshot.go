@@ -181,6 +181,12 @@ func sanitizeSecret(raw map[string]any) map[string]any {
 // string comparison and free of duplicates; the values behind them are never
 // used to build the index, the hashes or the report. When there are no keys the
 // field is omitted: absence means zero keys.
+//
+// dataKeys is always recomputed from data/stringData and a dataKeys field coming
+// from the input is ignored, whatever its JSON type: key names are the only
+// trace a written snapshot keeps of a Secret, so the writer materializes them
+// under data with empty values (see secretForDisk) and this reader rebuilds them,
+// which makes the reduced form round-trip without ever trusting a supplied list.
 func minimalSecret(apiVersion, name, namespace string, raw map[string]any) map[string]any {
 	reduced := map[string]any{
 		"kind":     "Secret",
@@ -566,7 +572,13 @@ func Load(dir string) (*Index, error) {
 	}
 	names := make([]string, 0, len(dirEntries))
 	for _, e := range dirEntries {
-		if e.IsDir() || e.Name() == "manifest.json" || !strings.HasSuffix(e.Name(), ".json") {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+		// manifest.json and metadata.json are output artifacts of WriteSnapshot,
+		// not input data; ignoring them lets a directory this tool wrote be read
+		// back.
+		if e.Name() == "manifest.json" || e.Name() == "metadata.json" {
 			continue
 		}
 		names = append(names, e.Name())
@@ -620,6 +632,16 @@ func Load(dir string) (*Index, error) {
 		return nil, fmt.Errorf("snapshot is missing required resource types: %s", strings.Join(missing, ", "))
 	}
 
+	if err := ix.finalize(); err != nil {
+		return nil, err
+	}
+	return ix, nil
+}
+
+// finalize records one missing-input gap per absent optional type and orders
+// the gaps. Load and LoadLive share it, so an offline and a live load of the
+// same state report the same gaps with the same shape.
+func (ix *Index) finalize() error {
 	for _, kind := range optionalKinds {
 		if ix.present[kind] {
 			continue
@@ -631,7 +653,7 @@ func Load(dir string) (*Index, error) {
 		})
 	}
 	sort.Slice(ix.gaps, func(i, j int) bool { return ix.gaps[i].Subject < ix.gaps[j].Subject })
-	return ix, nil
+	return nil
 }
 
 func pluralOf(kind string) string {

@@ -32,7 +32,9 @@ vet:
 lint:
 	golangci-lint run
 
-# Pinned: v1.2.0+ require go >= 1.25, above the go.mod target (go 1.23).
+# Pinned: an unversioned @latest broke this job once when a release raised its
+# own toolchain requirement. The go.mod minimum is go 1.25, so the toolchain the
+# directive pins runs the scan.
 vuln:
 	$(GO) run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 

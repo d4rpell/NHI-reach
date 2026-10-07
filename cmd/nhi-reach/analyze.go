@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"io"
 	"os"
 	"sort"
@@ -28,6 +29,8 @@ const (
 type analyzeOptions struct {
 	fromDir       string
 	live          bool
+	kubeconfig    string
+	context       string
 	output        string
 	outFile       string
 	maxDepth      int
@@ -60,6 +63,8 @@ func newAnalyzeCmd() *cobra.Command {
 	f := cmd.Flags()
 	f.StringVar(&opts.fromDir, "from", "", "directory holding a snapshot written by `nhi-reach snapshot`")
 	f.BoolVar(&opts.live, "live", false, "analyze a live cluster (read-only: get/list only)")
+	f.StringVar(&opts.kubeconfig, "kubeconfig", "", "path to the kubeconfig file for --live (defaults to the standard locations)")
+	f.StringVar(&opts.context, "context", "", "kubeconfig context to use for --live (defaults to the current one)")
 	f.StringVarP(&opts.output, "output", "o", "table", "output format: table|json|html")
 	f.StringVar(&opts.outFile, "out", "", "write the report to FILE instead of stdout")
 	f.IntVar(&opts.maxDepth, "max-depth", graph.DefaultMaxDepth, "maximum hop depth")
@@ -75,13 +80,19 @@ func newAnalyzeCmd() *cobra.Command {
 }
 
 func runAnalyze(w io.Writer, opts analyzeOptions) error {
+	return runAnalyzeContext(context.Background(), w, opts)
+}
+
+// runAnalyzeContext is runAnalyze with an explicit context, so tests can bound
+// the live client. The offline path ignores it.
+func runAnalyzeContext(ctx context.Context, w io.Writer, opts analyzeOptions) error {
 	if err := validateOptions(opts); err != nil {
 		return err
 	}
 
-	ix, err := snapshot.Load(opts.fromDir)
+	ix, err := loadSource(ctx, opts)
 	if err != nil {
-		return exitf(3, "%v", err)
+		return err
 	}
 
 	system := systemNamespaces(opts.systemNS)
@@ -326,10 +337,12 @@ func buildHTMLOptions() (report.HTMLOptions, error) {
 // ignoring them would misreport the analysis.
 func validateOptions(opts analyzeOptions) error {
 	switch {
-	case opts.live:
-		return exitf(3, "--live is not supported in this version; pass --from DIR")
-	case opts.fromDir == "":
-		return exitf(3, "--from DIR is required")
+	case opts.live && opts.fromDir != "":
+		return exitf(3, "--live and --from DIR are mutually exclusive")
+	case !opts.live && opts.fromDir == "":
+		return exitf(3, "--from DIR is required (or --live)")
+	case !opts.live && (opts.kubeconfig != "" || opts.context != ""):
+		return exitf(3, "--kubeconfig and --context only apply to --live")
 	case opts.output != "table" && opts.output != "json" && opts.output != "html":
 		return exitf(3, "-o %s is not supported; expected table, json or html", opts.output)
 	case opts.maxDepth < 1:
@@ -340,6 +353,33 @@ func validateOptions(opts analyzeOptions) error {
 		return exitf(3, "--fail-on %s is not supported; expected none or any", opts.failOn)
 	}
 	return validateTargets(opts.targets)
+}
+
+// loadSource builds the index from the requested source: a live cluster through
+// the read-only client, or an offline snapshot directory. Both paths converge on
+// the same index contract, so the rest of the analysis is source-independent. A
+// configuration, transport or authentication failure is an input error (exit 3).
+func loadSource(ctx context.Context, opts analyzeOptions) (*snapshot.Index, error) {
+	if !opts.live {
+		ix, err := snapshot.Load(opts.fromDir)
+		if err != nil {
+			return nil, exitf(3, "%v", err)
+		}
+		return ix, nil
+	}
+	cfg, _, err := snapshot.RESTConfig(opts.kubeconfig, opts.context)
+	if err != nil {
+		return nil, exitf(3, "%v", err)
+	}
+	client, err := snapshot.NewLiveClient(cfg)
+	if err != nil {
+		return nil, exitf(3, "%v", err)
+	}
+	ix, err := snapshot.LoadLive(ctx, client)
+	if err != nil {
+		return nil, exitf(3, "%v", err)
+	}
+	return ix, nil
 }
 
 // validateTargets rejects the goals of spec §2.5 this version does not know and

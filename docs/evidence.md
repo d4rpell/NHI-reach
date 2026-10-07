@@ -93,6 +93,18 @@ Contract:
   byte-level integrity of the directory: an optional type that is absent and
   the same type present as an empty list produce the same inventory.
 
-`nhi-reach analyze` ignores `manifest.json` when reading a directory. Verifying
-a directory against its manifest is the live `snapshot` command's job
-(forthcoming release).
+`nhi-reach snapshot` writes a directory in this format and then verifies it: it
+re-reads the data files, rebuilds the manifest and compares it with the
+`manifest.json` it persisted, checks that the set of data files is exactly the
+one `metadata.json` declares, and re-hashes each of them. A snapshot directory
+also carries an additive `metadata.json` (schema
+`nhi-reach/snapshot-metadata/v1`) with the tool version, commit, date, kubeconfig
+context, server version and the hash of every data file it wrote; it is
+provenance, not part of the manifest hash above.
+
+`nhi-reach analyze` ignores `manifest.json` and `metadata.json` when reading a
+directory with `--from DIR`. On the live path (`--live`) it builds the index
+through the same reduction and validation and applies the same gap rules, so an
+offline and a live load of the same configuration state produce the same index,
+manifest hash and gaps. The live client is read-only in code (only `get`/`list`);
+see [`permissions.md`](permissions.md).

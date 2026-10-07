@@ -1,12 +1,8 @@
 package main
 
 import (
-	"errors"
-
 	"github.com/spf13/cobra"
 )
-
-var errNotImplemented = errors.New("not implemented yet")
 
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
