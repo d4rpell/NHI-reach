@@ -39,4 +39,5 @@ jobs:
       - uses: actions/setup-go@v7
         with:
           go-version: "1.23"
-      - run: go run golang.org/x/vuln/cmd/govulncheck@latest ./...
+      # Pin: v1.2.0+ require go >= 1.25 and runners set GOTOOLCHAIN=local, so @latest fails on go 1.23.
+      - run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...

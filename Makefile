@@ -32,8 +32,9 @@ vet:
 lint:
 	golangci-lint run
 
+# Pinned: v1.2.0+ require go >= 1.25, above the go.mod target (go 1.23).
 vuln:
-	$(GO) run golang.org/x/vuln/cmd/govulncheck@latest ./...
+	$(GO) run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 
 fmt:
 	$(GO) fmt ./...
