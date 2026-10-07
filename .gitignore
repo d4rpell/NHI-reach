@@ -16,6 +16,10 @@ docs/specs/
 coverage.out
 cover.out
 
+# Informes generados por el usuario
+report.html
+report.json
+
 # Entorno
 .env
 .env.*
