@@ -38,6 +38,14 @@ jobs:
       - uses: actions/checkout@v7
       - uses: actions/setup-go@v7
         with:
-          go-version: "1.23"
-      # Pin: v1.2.0+ require go >= 1.25 and runners set GOTOOLCHAIN=local, so @latest fails on go 1.23.
+          # govulncheck reports the standard-library advisories of the toolchain
+          # it runs on, so this job pins the toolchain itself: the os fix for
+          # GO-2026-4602 (CVE-2026-27139) is available in the 1.25 line from
+          # go1.25.8 on and has no backport to the 1.23 or 1.24 lines. The other
+          # jobs keep building and testing on go 1.23, the minimum go.mod
+          # declares: those checks validate compatibility, not the absence of
+          # vulnerabilities in the Go 1.23 standard library.
+          go-version: "1.25.8"
+      # Pinned on purpose: an unversioned @latest broke this job once, when a
+      # new release raised its own toolchain requirement (commit 954caa6).
       - run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
