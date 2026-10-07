@@ -1,0 +1,18 @@
+# Privado (D-012, D-014): fuera de git
+AGENTS.md
+CLAUDE.md
+CODEBASE_SUMMARY.md
+CONTEXT_CHANGELOG.md
+TODO.md
+docs/decisions.md
+docs/specs/
+.internal/
+
+# Artefactos de build
+/bin/
+/dist/
+*.exe
+
+# Entorno
+.env
+.env.*
