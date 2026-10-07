@@ -1,0 +1,59 @@
+# Proposed v1 hop catalog (task T1-03). The owner approves this list before
+# T1-04 implements it; nothing here is implemented yet.
+#
+# Format: spec 2.4. Every entry must cite the official documentation that
+# justifies it. `status: enabled` means T1-04 implements and tests the hop;
+# the per-hop static condition and the intended confidence are specified in
+# docs/specs/2026-10-07-t1-03-hop-catalog.md.
+#
+# T1-04 embeds this file and replaces the NR-001 literal in hops.go with it.
+# Until then hops.Catalog() still returns that literal, which mirrors NR-001
+# here field by field.
+
+- id: NR-001
+  title: "Workload creation grants any service account of the namespace"
+  reference: "https://kubernetes.io/docs/concepts/security/rbac-good-practices/#workload-creation"
+  target_effect: identity
+  status: enabled
+  rationale: "Creating a workload in a namespace lets an identity run a Pod as any ServiceAccount of that namespace, so the identity inherits that service account's API access level. Namespace boundaries are weak separation, not a privilege boundary."
+  remediation: "Remove the create permission on workloads from identities that do not need it and enforce the Baseline or Restricted Pod Security Standard."
+
+- id: NR-002
+  title: "Impersonation of a service account"
+  reference: "https://kubernetes.io/docs/concepts/security/rbac-good-practices/#impersonate-verb"
+  target_effect: identity
+  status: enabled
+  rationale: "The impersonate verb lets an identity issue API requests as another subject and gain that subject's rights, so an identity that may impersonate service accounts can act as any service account of the namespace without holding any credential of its own."
+  remediation: "Do not grant impersonate on serviceaccounts to application identities, and treat any rule that grants impersonate on users, groups or serviceaccounts as a cluster-admin-class capability."
+
+- id: NR-003
+  title: "Token request for an existing service account"
+  reference: "https://kubernetes.io/docs/concepts/security/rbac-good-practices/#token-request"
+  target_effect: identity
+  status: enabled
+  rationale: "Create on serviceaccounts/token lets an identity mint a token for an existing service account, so it can authenticate as that account and inherit its API access level. The documentation states that users with create rights on serviceaccounts/token can create TokenRequests to issue tokens for existing service accounts."
+  remediation: "Restrict create on serviceaccounts/token to the components that must mint tokens, and keep issued tokens short-lived and audience-scoped."
+
+- id: NR-004
+  title: "Binding a cluster role the identity does not hold"
+  reference: "https://kubernetes.io/docs/concepts/security/rbac-good-practices/#bind-verb"
+  target_effect: target
+  status: enabled
+  rationale: "The bind verb bypasses the built-in protection that stops a binding from conferring permissions its author does not hold, so an identity that may bind a cluster role and create a cluster role binding to it can grant itself that role at cluster scope. The documentation states that granting this right allows users to create bindings to roles with rights they do not already have."
+  remediation: "Reserve bind to the controllers that manage role aggregation and do not grant it to application identities; review any rule that combines bind with create on clusterrolebindings or with update on an existing cluster role binding."
+
+- id: NR-005
+  title: "Widening a cluster role already bound to the identity"
+  reference: "https://kubernetes.io/docs/concepts/security/rbac-good-practices/#escalate-verb"
+  target_effect: target
+  status: enabled
+  rationale: "The escalate verb lets an identity add permissions to a role beyond the ones it holds, so it can widen a cluster role that already reaches it through a cluster role binding and gain any cluster-scoped privilege through that existing binding. The documentation states that users with this right can effectively escalate their privileges."
+  remediation: "Reserve escalate to the controllers that manage role aggregation and do not grant it to application identities."
+
+- id: NR-006
+  title: "Client certificate issued through the CSR API"
+  reference: "https://kubernetes.io/docs/concepts/security/rbac-good-practices/#csrs-and-certificate-issuing"
+  target_effect: target
+  status: enabled
+  rationale: "Create on certificatesigningrequests, update on certificatesigningrequests/approval and approve on the signers resource for the kube-apiserver-client signer let an identity obtain a client certificate for a subject of its choosing, and that certificate authenticates it as that subject. The reach of the escalation is therefore a privileged subject that the snapshot already binds to a cluster-admin equivalent role and that the signer will certify: the kube-apiserver-client signer imposes no subject restrictions, but the CertificateSubjectRestriction admission plugin restricts system:masters by default."
+  remediation: "Do not grant approve on signers or update on certificatesigningrequests/approval outside the signer controllers, restrict create on certificatesigningrequests to the components that must request serving or client certificates, and keep the CertificateSubjectRestriction admission plugin enabled."
