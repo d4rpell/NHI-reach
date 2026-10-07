@@ -1,8 +1,6 @@
 package main
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"io"
 	"sort"
 	"strings"
@@ -10,21 +8,10 @@ import (
 	"github.com/d4rpell/nhi-reach/internal/graph"
 	"github.com/d4rpell/nhi-reach/internal/hops"
 	"github.com/d4rpell/nhi-reach/internal/model"
-	"github.com/d4rpell/nhi-reach/internal/rbac"
 	"github.com/d4rpell/nhi-reach/internal/report"
 	"github.com/d4rpell/nhi-reach/internal/snapshot"
 	"github.com/spf13/cobra"
 )
-
-// defaultSystemNamespaces is the default system-identity list of spec §2.6. An
-// entry ending in "*" matches by prefix.
-var defaultSystemNamespaces = []string{
-	"kube-system",
-	"kube-public",
-	"kube-node-lease",
-	"openshift",
-	"openshift-*",
-}
 
 // evaluatedTarget is the only goal this version computes paths to. The other
 // targets of spec §2.5 are rejected with exit code 3 rather than silently left
@@ -90,9 +77,9 @@ func runAnalyze(w io.Writer, opts analyzeOptions) error {
 	gaps := ix.Gaps()
 	sortGaps(gaps)
 
-	edges, err := buildEdges(ix)
+	edges, err := hops.Edges(ix)
 	if err != nil {
-		return err
+		return exitf(3, "%v", err)
 	}
 
 	origins, err := resolveOrigins(ix, opts)
@@ -107,7 +94,7 @@ func runAnalyze(w io.Writer, opts analyzeOptions) error {
 			continue
 		}
 		paths = append(paths, model.Path{
-			ID:     pathID(pathEdges),
+			ID:     graph.PathID(pathEdges),
 			Source: hops.IdentityID(origin),
 			Target: hops.TargetClusterAdmin,
 			Edges:  pathEdges,
@@ -163,44 +150,6 @@ func validateTargets(targets []string) error {
 	return nil
 }
 
-// buildEdges runs every edge builder over every ServiceAccount of the snapshot.
-func buildEdges(ix *snapshot.Index) ([]model.Edge, error) {
-	privileged, err := rbac.PrivilegedSubjects(ix)
-	if err != nil {
-		return nil, exitf(3, "%v", err)
-	}
-
-	var edges []model.Edge
-	for _, sa := range ix.List("ServiceAccount", "") {
-		granted, err := rbac.Effective(ix, rbac.ServiceAccount(sa))
-		if err != nil {
-			return nil, exitf(3, "%v", err)
-		}
-		edges = append(edges, hops.ClusterAdminEdges(sa, granted)...)
-		catalogEdges, err := hops.CatalogEdges(hops.Context{
-			Index:      ix,
-			Identity:   sa,
-			Granted:    granted,
-			Privileged: privileged,
-		})
-		if err != nil {
-			return nil, exitf(3, "%v", err)
-		}
-		edges = append(edges, catalogEdges...)
-	}
-	sort.Slice(edges, func(i, j int) bool {
-		a, b := edges[i], edges[j]
-		if a.From != b.From {
-			return a.From < b.From
-		}
-		if a.To != b.To {
-			return a.To < b.To
-		}
-		return a.HopID < b.HopID
-	})
-	return edges, nil
-}
-
 // resolveOrigins returns the identities the search starts from: the one named
 // with --from-identity, or every non-system ServiceAccount (spec §2.6).
 func resolveOrigins(ix *snapshot.Index, opts analyzeOptions) ([]model.ObjectRef, error) {
@@ -216,32 +165,17 @@ func resolveOrigins(ix *snapshot.Index, opts analyzeOptions) ([]model.ObjectRef,
 		return []model.ObjectRef{ref}, nil
 	}
 
-	system := defaultSystemNamespaces
+	system := graph.DefaultSystemNamespaces()
 	if opts.systemNS != "" {
-		system = splitList(opts.systemNS)
+		system = graph.SystemNamespaces(splitList(opts.systemNS))
 	}
 	var origins []model.ObjectRef
 	for _, sa := range ix.List("ServiceAccount", "") {
-		if opts.includeSystem || !isSystemNamespace(sa.Namespace, system) {
+		if opts.includeSystem || !system.Matches(sa.Namespace) {
 			origins = append(origins, sa)
 		}
 	}
 	return origins, nil
-}
-
-func isSystemNamespace(namespace string, system []string) bool {
-	for _, entry := range system {
-		if prefix, ok := strings.CutSuffix(entry, "*"); ok {
-			if strings.HasPrefix(namespace, prefix) {
-				return true
-			}
-			continue
-		}
-		if namespace == entry {
-			return true
-		}
-	}
-	return false
 }
 
 func splitList(value string) []string {
@@ -262,14 +196,4 @@ func sortGaps(gaps []model.Gap) {
 		}
 		return gaps[i].Message < gaps[j].Message
 	})
-}
-
-// pathID identifies a path by its edge sequence, so the same route always gets
-// the same identifier.
-func pathID(edges []model.Edge) string {
-	hash := sha256.New()
-	for _, edge := range edges {
-		_, _ = hash.Write([]byte(edge.From + "\x00" + edge.To + "\x00" + edge.HopID + "\n"))
-	}
-	return hex.EncodeToString(hash.Sum(nil))
 }

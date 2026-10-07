@@ -11,6 +11,8 @@ package rbac
 import (
 	"fmt"
 	"sort"
+	"strconv"
+	"strings"
 
 	"github.com/d4rpell/nhi-reach/internal/model"
 	"github.com/d4rpell/nhi-reach/internal/snapshot"
@@ -223,6 +225,202 @@ func Effective(ix *snapshot.Index, p Principal) ([]Granted, error) {
 type BindingRef struct {
 	Object model.ObjectRef // the RoleBinding or ClusterRoleBinding
 	Role   model.ObjectRef // the Role or ClusterRole it applies
+}
+
+// Without returns a copy of the snapshot index in which the given removal units
+// have been applied: a "binding-subject" unit drops every subject entry of its
+// binding that names that subject, and a "role-rule" unit drops the rule at the
+// index it names. It is the inverse of the units Effective produces, and the
+// substrate of cut verification (spec §3 step 6): the hypothetical model in
+// which a grant is no longer granted.
+//
+// Neither the receiver nor the caller's index is modified. A unit the index
+// cannot apply — an unsupported kind, an object the snapshot does not hold, a
+// rule index out of range, a malformed detail — is an error, never a silent
+// no-op: a removal that did nothing would let a cut be reported as verified
+// against an untouched model.
+func Without(ix *snapshot.Index, units []model.Grant) (*snapshot.Index, error) {
+	type group struct {
+		object model.ObjectRef
+		units  []model.Grant
+	}
+	var order []string
+	groups := map[string]*group{}
+	for _, unit := range units {
+		key := objectKey(unit.Object)
+		g := groups[key]
+		if g == nil {
+			g = &group{object: unit.Object}
+			groups[key] = g
+			order = append(order, key)
+		}
+		g.units = append(g.units, unit)
+	}
+
+	out := ix
+	for _, key := range order {
+		g := groups[key]
+		plan, err := removalPlanFor(g.units)
+		if err != nil {
+			return nil, fmt.Errorf("remove from %s: %w", describeObject(g.object), err)
+		}
+		next, err := out.Edited(g.object.Kind, g.object.Namespace, g.object.Name, plan)
+		if err != nil {
+			return nil, err
+		}
+		out = next
+	}
+	return out, nil
+}
+
+// removalPlanFor turns the removal units of one object into the edit that
+// applies them together. Equivalent units are collapsed, so asking twice for the
+// same removal is not an error; every other unit is validated against the
+// object's own fields, so an unsupported kind, a rule index out of range, a
+// malformed detail or a subject the object does not name fails here instead of
+// being dropped silently.
+func removalPlanFor(units []model.Grant) (func(map[string]any) error, error) {
+	var subjects []Principal
+	var rules []int
+	seenSubjects := map[Principal]bool{}
+	seenRules := map[int]bool{}
+	for _, unit := range units {
+		switch unit.Kind {
+		case "binding-subject":
+			subject, err := parseSubjectDetail(unit.Detail)
+			if err != nil {
+				return nil, err
+			}
+			if seenSubjects[subject] {
+				continue
+			}
+			seenSubjects[subject] = true
+			subjects = append(subjects, subject)
+		case "role-rule":
+			index, err := parseRuleDetail(unit.Detail)
+			if err != nil {
+				return nil, err
+			}
+			if seenRules[index] {
+				continue
+			}
+			seenRules[index] = true
+			rules = append(rules, index)
+		default:
+			return nil, fmt.Errorf("unsupported removal unit kind %q", unit.Kind)
+		}
+	}
+
+	return func(obj map[string]any) error {
+		if len(subjects) > 0 {
+			kept, err := dropSubjects(obj["subjects"], subjects)
+			if err != nil {
+				return err
+			}
+			obj["subjects"] = kept
+		}
+		if len(rules) > 0 {
+			kept, err := dropRules(obj["rules"], rules)
+			if err != nil {
+				return err
+			}
+			obj["rules"] = kept
+		}
+		return nil
+	}, nil
+}
+
+// dropSubjects removes every entry that names one of the subjects. Removing a
+// single entry would leave the grant alive through a duplicated one, and a
+// subject the object does not name is an error: a removal that changed nothing
+// would let an untouched model be reported as a verified cut.
+func dropSubjects(raw any, drop []Principal) ([]any, error) {
+	subjects, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("object carries no subjects")
+	}
+	matched := make([]bool, len(drop))
+	kept := make([]any, 0, len(subjects))
+	for _, item := range subjects {
+		if subject, ok := item.(map[string]any); ok {
+			if at := indexOfSubject(subject, drop); at >= 0 {
+				matched[at] = true
+				continue
+			}
+		}
+		kept = append(kept, item)
+	}
+	for at, found := range matched {
+		if !found {
+			return nil, fmt.Errorf("the object does not name subject %s", describePrincipal(drop[at]))
+		}
+	}
+	return kept, nil
+}
+
+// indexOfSubject reports which of the dropped identities the subject entry is,
+// or -1. It compares the entry as written, so dropping a subject never depends
+// on re-deriving group membership. A ServiceAccount keeps its namespace, while
+// the canonical detail of a User or a Group carries none: matchedSubjects
+// ignores that namespace too, so a namespaced User or Group entry is matched by
+// name alone, exactly as it was granted.
+func indexOfSubject(subject map[string]any, drop []Principal) int {
+	kind, _ := subject["kind"].(string)
+	name, _ := subject["name"].(string)
+	namespace, _ := subject["namespace"].(string)
+	for at, p := range drop {
+		if kind != p.Kind || name != p.Name {
+			continue
+		}
+		if kind == "ServiceAccount" && namespace != p.Namespace {
+			continue
+		}
+		return at
+	}
+	return -1
+}
+
+func describePrincipal(p Principal) string {
+	if p.Namespace == "" {
+		return p.Kind + " " + p.Name
+	}
+	return p.Kind + " " + p.Namespace + "/" + p.Name
+}
+
+// dropRules removes the rules at the given indices, validated against the
+// object's own rule list.
+func dropRules(raw any, drop []int) ([]any, error) {
+	rules, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("object carries no rules")
+	}
+	dropping := map[int]bool{}
+	for _, index := range drop {
+		if index < 0 || index >= len(rules) {
+			return nil, fmt.Errorf("rule index %d is out of range: the object has %d rules", index, len(rules))
+		}
+		dropping[index] = true
+	}
+	kept := make([]any, 0, len(rules)-len(dropping))
+	for index, rule := range rules {
+		if dropping[index] {
+			continue
+		}
+		kept = append(kept, rule)
+	}
+	return kept, nil
+}
+
+// objectKey is the index key of the object a removal unit belongs to.
+func objectKey(ref model.ObjectRef) string {
+	return ref.Kind + "\x00" + ref.Namespace + "\x00" + ref.Name
+}
+
+func describeObject(ref model.ObjectRef) string {
+	if ref.Namespace == "" {
+		return ref.Kind + " " + ref.Name
+	}
+	return ref.Kind + " " + ref.Namespace + "/" + ref.Name
 }
 
 // Bindings returns the bindings that name p as a subject, ordered by (kind,
@@ -468,6 +666,52 @@ func subjectDetail(kind, namespace, name string) string {
 		return "subject ServiceAccount " + namespace + "/" + name
 	}
 	return "subject " + kind + " " + name
+}
+
+// parseSubjectDetail reads the canonical detail subjectDetail writes:
+// "subject <Kind> <identity>", where a ServiceAccount identity is
+// "<namespace>/<name>" and a User or Group identity is its name as it appears in
+// the binding, spaces included. The three kinds are the ones subjectDetail can
+// produce, so any other kind is a detail this index never wrote.
+func parseSubjectDetail(detail string) (Principal, error) {
+	rest, ok := strings.CutPrefix(detail, "subject ")
+	if !ok {
+		return Principal{}, fmt.Errorf("unrecognised subject detail %q", detail)
+	}
+	kind, identity, ok := strings.Cut(rest, " ")
+	if !ok || kind == "" || identity == "" {
+		return Principal{}, fmt.Errorf("unrecognised subject detail %q", detail)
+	}
+	switch kind {
+	case "ServiceAccount":
+		namespace, name, ok := strings.Cut(identity, "/")
+		if !ok || namespace == "" || name == "" {
+			return Principal{}, fmt.Errorf("subject detail %q does not hold a namespace/name", detail)
+		}
+		return Principal{Kind: kind, Namespace: namespace, Name: name}, nil
+	case "User", "Group":
+		return Principal{Kind: kind, Name: identity}, nil
+	default:
+		return Principal{}, fmt.Errorf("subject detail %q names an unsupported subject kind %q", detail, kind)
+	}
+}
+
+// parseRuleDetail reads the canonical detail Effective writes for a rule:
+// "rules[i]".
+func parseRuleDetail(detail string) (int, error) {
+	inner, ok := strings.CutPrefix(detail, "rules[")
+	if !ok {
+		return 0, fmt.Errorf("unrecognised rule detail %q", detail)
+	}
+	inner, ok = strings.CutSuffix(inner, "]")
+	if !ok {
+		return 0, fmt.Errorf("unrecognised rule detail %q", detail)
+	}
+	index, err := strconv.Atoi(inner)
+	if err != nil || index < 0 {
+		return 0, fmt.Errorf("unrecognised rule detail %q", detail)
+	}
+	return index, nil
 }
 
 func parseRule(rule map[string]any) Rule {

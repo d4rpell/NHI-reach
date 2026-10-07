@@ -1,11 +1,17 @@
-// Package graph holds the reachability algorithms of the analysis.
+// Package graph holds the reachability algorithms of the analysis:
+// reachability and its minimum distance, bounded enumeration of simple paths,
+// cut verification against a hypothetical model held in memory, and greedy
+// bottleneck coverage (spec §3 steps 4–7).
 //
-// The light vertical implements only the shortest path between one origin and
-// one target. Full path enumeration, cut verification and bottleneck coverage
-// belong to T1-05.
+// Every claim this package makes holds "in the model and up to --max-depth"
+// only (spec §3 step 8, D-011). It is never a statement about the real cluster,
+// and the bottleneck cover is presented as a verified heuristic, never as a
+// minimum set.
 package graph
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"sort"
 	"strconv"
 	"strings"
@@ -29,15 +35,7 @@ func ShortestPath(edges []model.Edge, source, target string, maxDepth int) ([]mo
 		return nil, false
 	}
 
-	adjacency := map[string][]model.Edge{}
-	for _, edge := range edges {
-		adjacency[edge.From] = append(adjacency[edge.From], edge)
-	}
-	for from := range adjacency {
-		neighbours := adjacency[from]
-		sortEdges(neighbours)
-		adjacency[from] = neighbours
-	}
+	adj := adjacency(edges)
 
 	type step struct {
 		node  string
@@ -53,7 +51,7 @@ func ShortestPath(edges []model.Edge, source, target string, maxDepth int) ([]mo
 		if current.depth >= maxDepth {
 			continue
 		}
-		for _, edge := range adjacency[current.node] {
+		for _, edge := range adj[current.node] {
 			path := make([]model.Edge, len(current.path)+1)
 			copy(path, current.path)
 			path[len(current.path)] = edge
@@ -68,6 +66,30 @@ func ShortestPath(edges []model.Edge, source, target string, maxDepth int) ([]mo
 		}
 	}
 	return nil, false
+}
+
+// PathID identifies a path by its edge sequence, so the same route always gets
+// the same identifier.
+func PathID(edges []model.Edge) string {
+	hash := sha256.New()
+	for _, edge := range edges {
+		_, _ = hash.Write([]byte(edge.From + "\x00" + edge.To + "\x00" + edge.HopID + "\n"))
+	}
+	return hex.EncodeToString(hash.Sum(nil))
+}
+
+// adjacency groups edges by their origin and orders the outgoing edges of every
+// node by the total key of edgeKey, so every traversal of the graph visits
+// neighbours in an order that does not depend on the order of the input.
+func adjacency(edges []model.Edge) map[string][]model.Edge {
+	byOrigin := make(map[string][]model.Edge)
+	for _, edge := range edges {
+		byOrigin[edge.From] = append(byOrigin[edge.From], edge)
+	}
+	for from := range byOrigin {
+		sortEdges(byOrigin[from])
+	}
+	return byOrigin
 }
 
 // sortEdges orders edges by the total key of edgeKey. Two edges with the same

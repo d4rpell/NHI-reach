@@ -4,6 +4,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -494,5 +495,156 @@ func TestListNamespaceFilter(t *testing.T) {
 	}
 	if got := len(ix.List("ServiceAccount", "ns1")); got != 1 {
 		t.Errorf("namespace filter returned %d objects, want 1", got)
+	}
+}
+
+// addRaw indexes one decoded fixture object.
+func addRaw(t *testing.T, ix *Index, raw string) {
+	t.Helper()
+	var obj map[string]any
+	if err := json.Unmarshal([]byte(raw), &obj); err != nil {
+		t.Fatalf("unmarshal fixture: %v", err)
+	}
+	if err := ix.Add(obj); err != nil {
+		t.Fatalf("index fixture: %v", err)
+	}
+}
+
+const bindingRaw = `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"RoleBinding",
+	"metadata":{"name":"creator","namespace":"app"},
+	"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"Role","name":"creator"},
+	"subjects":[{"kind":"ServiceAccount","name":"deployer","namespace":"app"},
+	            {"kind":"Group","name":"system:authenticated"}]}`
+
+func TestEditedReturnsTheChangedObjectAndKeepsTheReceiver(t *testing.T) {
+	ix := New()
+	addRaw(t, ix, bindingRaw)
+
+	_, before, _ := ix.Entry("RoleBinding", "app", "creator")
+	beforeCopy, err := json.Marshal(before)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestBefore := ix.Manifest()
+
+	edited, err := ix.Edited("RoleBinding", "app", "creator", func(obj map[string]any) error {
+		subjects, _ := obj["subjects"].([]any)
+		obj["subjects"] = subjects[:1]
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Edited: %v", err)
+	}
+
+	_, after, _ := edited.Entry("RoleBinding", "app", "creator")
+	subjectsAfter, _ := after["subjects"].([]any)
+	if len(subjectsAfter) != 1 {
+		t.Errorf("edited object holds %d subjects, want 1", len(subjectsAfter))
+	}
+
+	// The receiver must be identical field by field, not only by manifest hash:
+	// a manifest compares stored digests, which an in-place mutation of a nested
+	// slice would preserve.
+	_, stillThere, _ := ix.Entry("RoleBinding", "app", "creator")
+	stillCopy, err := json.Marshal(stillThere)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(stillCopy) != string(beforeCopy) {
+		t.Errorf("the receiver changed:\n before %s\n  after %s", beforeCopy, stillCopy)
+	}
+	if got := ix.Manifest(); got.SHA256 != manifestBefore.SHA256 {
+		t.Errorf("receiver manifest changed: %s -> %s", manifestBefore.SHA256, got.SHA256)
+	}
+	if edited.Manifest().SHA256 == manifestBefore.SHA256 {
+		t.Error("the edited index has the same snapshot hash as the original one")
+	}
+}
+
+func TestEditedRecomputesTheObjectHash(t *testing.T) {
+	ix := New()
+	addRaw(t, ix, bindingRaw)
+	ref, _, _ := ix.Entry("RoleBinding", "app", "creator")
+
+	edited, err := ix.Edited("RoleBinding", "app", "creator", func(obj map[string]any) error {
+		obj["subjects"] = []any{}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("Edited: %v", err)
+	}
+	editedRef, _, _ := edited.Entry("RoleBinding", "app", "creator")
+	if editedRef.SHA256 == ref.SHA256 {
+		t.Error("the edited object kept the hash of the original representation")
+	}
+	_, obj, _ := edited.Entry("RoleBinding", "app", "creator")
+	canonical, err := json.Marshal(obj)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256(canonical)
+	if want := hex.EncodeToString(sum[:]); editedRef.SHA256 != want {
+		t.Errorf("edited hash %s is not the hash of its canonical JSON %s", editedRef.SHA256, want)
+	}
+}
+
+func TestEditedLeavesBothIndexesUntouchedOnError(t *testing.T) {
+	ix := New()
+	addRaw(t, ix, bindingRaw)
+	_, before, _ := ix.Entry("RoleBinding", "app", "creator")
+	beforeCopy, err := json.Marshal(before)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestBefore := ix.Manifest().SHA256
+
+	result, err := ix.Edited("RoleBinding", "app", "creator", func(obj map[string]any) error {
+		obj["subjects"] = []any{}
+		return errors.New("fixture edit failure")
+	})
+	if err == nil {
+		t.Fatal("Edited accepted an edit that failed")
+	}
+	if result != nil {
+		t.Error("Edited returned an index along with the error")
+	}
+	_, stillThere, _ := ix.Entry("RoleBinding", "app", "creator")
+	stillCopy, err := json.Marshal(stillThere)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(stillCopy) != string(beforeCopy) {
+		t.Errorf("a failed edit modified the receiver:\n before %s\n  after %s", beforeCopy, stillCopy)
+	}
+	if got := ix.Manifest().SHA256; got != manifestBefore {
+		t.Errorf("a failed edit changed the receiver manifest: %s -> %s", manifestBefore, got)
+	}
+}
+
+func TestEditedRejectsUnknownObjectAndIdentityChange(t *testing.T) {
+	ix := New()
+	addRaw(t, ix, bindingRaw)
+
+	if _, err := ix.Edited("RoleBinding", "app", "absent", func(map[string]any) error { return nil }); err == nil {
+		t.Error("Edited accepted a missing object")
+	}
+	for _, tc := range []struct {
+		name string
+		edit func(map[string]any) error
+	}{
+		{"rename", func(obj map[string]any) error {
+			obj["metadata"] = map[string]any{"name": "other", "namespace": "app"}
+			return nil
+		}},
+		{"rekind", func(obj map[string]any) error {
+			obj["kind"] = "ClusterRoleBinding"
+			return nil
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := ix.Edited("RoleBinding", "app", "creator", tc.edit); err == nil {
+				t.Error("Edited accepted an edit that changed the identity of the object")
+			}
+		})
 	}
 }

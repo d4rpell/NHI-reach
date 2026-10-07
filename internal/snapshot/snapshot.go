@@ -300,6 +300,164 @@ func (ix *Index) Gaps() []model.Gap {
 // its items or through a conventionally named empty list file.
 func (ix *Index) HasKind(kind string) bool { return ix.present[kind] }
 
+// Edited returns a copy of the index in which the object at (kind, namespace,
+// name) is replaced by edit applied to a copy of its fields, re-validated and
+// re-hashed.
+//
+// The receiver is never modified, so the index stays a read-only view of the
+// input snapshot; the result is the hypothetical model that cut verification
+// works on (spec §3 step 6). It is a purely in-memory operation: no cluster is
+// contacted and nothing is written.
+//
+// The callback receives a deep copy of the object and its result is copied
+// again before it is stored, so neither mutating a nested field nor keeping a
+// reference to the map can reach the receiver or the returned index. It may
+// fail, and validation runs against a scratch index before the copy is
+// published, so an error leaves both indexes untouched.
+func (ix *Index) Edited(kind, namespace, name string, edit func(map[string]any) error) (*Index, error) {
+	key := namespace + "/" + name
+	o, ok := ix.byKind[kind][key]
+	if !ok {
+		return nil, fmt.Errorf("cannot edit missing object %s %s", kind, key)
+	}
+
+	edited := deepCopy(o.raw).(map[string]any)
+	if err := edit(edited); err != nil {
+		return nil, err
+	}
+	// The identity is part of the index key, so it is checked before any
+	// reduction: a reduction could otherwise rebuild the object under the name it
+	// expects and hide the change.
+	if err := checkIdentity(kind, namespace, name, edited); err != nil {
+		return nil, err
+	}
+
+	published, err := canonical(kind, edited, o.raw)
+	if err != nil {
+		return nil, err
+	}
+
+	scratch := New()
+	if err := scratch.index(published); err != nil {
+		return nil, err
+	}
+	replacement, ok := scratch.byKind[kind][key]
+	if !ok {
+		return nil, fmt.Errorf("edit changed the identity of %s %s", kind, key)
+	}
+
+	clone := ix.copy()
+	clone.byKind[kind][key] = replacement
+	return clone, nil
+}
+
+// canonical turns a freshly edited object into the representation the index
+// stores: the canonical decoding of its own JSON. The decoding shares nothing
+// with the caller — a callback may build Go values, not only decoded JSON, and
+// may keep references to them — and it rejects any value the index cannot hold,
+// so a func, a channel or a cycle is an error instead of a silently shared
+// reference the hash would not cover.
+//
+// A Secret is reduced exactly as Add reduces it, with one exception: when the
+// edit left the content fields untouched it keeps the key names the object
+// already carried, because they are the only trace the reduction allows and the
+// fields they were derived from are no longer there.
+func canonical(kind string, edited, original map[string]any) (map[string]any, error) {
+	encoded, err := json.Marshal(edited)
+	if err != nil {
+		return nil, fmt.Errorf("edited %s is not representable as JSON: %w", kind, err)
+	}
+	published := map[string]any{}
+	if err := json.Unmarshal(encoded, &published); err != nil {
+		return nil, fmt.Errorf("edited %s is not representable as JSON: %w", kind, err)
+	}
+
+	if kind != "Secret" {
+		return published, nil
+	}
+	reduced := sanitizeSecret(published)
+	if !carriesContentFields(edited) {
+		// The edit did not decide the content fields, so the key names the object
+		// already carried — the only trace of them the reduction keeps — are
+		// preserved. Writing them empty is a decision, and then they are
+		// recomputed from what the callback wrote.
+		if keys, ok := original["dataKeys"]; ok {
+			reduced["dataKeys"] = deepCopy(keys)
+		}
+	}
+	return reduced, nil
+}
+
+// carriesContentFields reports whether the object carries the fields Secret
+// values live in, even when they hold nothing.
+func carriesContentFields(raw map[string]any) bool {
+	for _, field := range SecretContentKeys {
+		if _, ok := raw[field]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+// checkIdentity rejects an edit that changes the kind, the name or the namespace
+// of the object: those are the index key, so accepting the change would publish
+// the object under an identity no caller asked for.
+func checkIdentity(kind, namespace, name string, edited map[string]any) error {
+	meta, _ := edited["metadata"].(map[string]any)
+	editedKind, _ := edited["kind"].(string)
+	editedName, _ := meta["name"].(string)
+	editedNamespace, _ := meta["namespace"].(string)
+	if editedKind == kind && editedName == name && editedNamespace == namespace {
+		return nil
+	}
+	return fmt.Errorf("edit changed the identity of %s %s/%s", kind, namespace, name)
+}
+
+// deepCopy returns an independent copy of a decoded JSON value: maps and slices
+// are rebuilt recursively, scalars are shared because they are immutable.
+func deepCopy(value any) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for k, v := range typed {
+			out[k] = deepCopy(v)
+		}
+		return out
+	case []any:
+		out := make([]any, len(typed))
+		for i, v := range typed {
+			out[i] = deepCopy(v)
+		}
+		return out
+	case []string:
+		return append([]string(nil), typed...)
+	default:
+		return value
+	}
+}
+
+// copy returns an independent copy of the index. The kind and object maps are
+// new; the objects themselves are shared, because they are never mutated in
+// place — Edited replaces the whole entry.
+func (ix *Index) copy() *Index {
+	out := &Index{
+		byKind:  make(map[string]map[string]*object, len(ix.byKind)),
+		present: make(map[string]bool, len(ix.present)),
+		gaps:    append([]model.Gap(nil), ix.gaps...),
+	}
+	for kind, byKey := range ix.byKind {
+		copied := make(map[string]*object, len(byKey))
+		for key, o := range byKey {
+			copied[key] = o
+		}
+		out.byKind[kind] = copied
+	}
+	for kind, present := range ix.present {
+		out.present[kind] = present
+	}
+	return out
+}
+
 // ManifestSchema identifies the manifest.json format of WriteFile.
 const ManifestSchema = "nhi-reach/snapshot-manifest/v1"
 

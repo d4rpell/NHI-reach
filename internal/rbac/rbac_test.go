@@ -523,3 +523,231 @@ func TestEffectiveOrderHandlesNameCollisions(t *testing.T) {
 		t.Errorf("reverse indexing produced a different order:\n%s\nwant:\n%s", got, want)
 	}
 }
+
+// multiSubjectBinding reaches app/deployer through two subjects at once: its own
+// ServiceAccount and a group every ServiceAccount belongs to.
+func multiSubjectBinding(t *testing.T) *snapshot.Index {
+	t.Helper()
+	ix := snapshot.New()
+	add(t, ix, `{"apiVersion":"v1","kind":"ServiceAccount","metadata":{"name":"deployer","namespace":"app"}}`)
+	add(t, ix, `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRole","metadata":{"name":"cluster-admin"},
+		"rules":[{"apiGroups":["*"],"resources":["*"],"verbs":["*"]}]}`)
+	add(t, ix, `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRoleBinding","metadata":{"name":"admin"},
+		"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"ClusterRole","name":"cluster-admin"},
+		"subjects":[{"kind":"ServiceAccount","name":"deployer","namespace":"app"},
+		            {"kind":"Group","name":"system:authenticated"}]}`)
+	return ix
+}
+
+func grantsOf(t *testing.T, ix *snapshot.Index, p Principal) []model.Grant {
+	t.Helper()
+	var out []model.Grant
+	for _, granted := range allowed(t, ix, p) {
+		out = append(out, granted.Grants...)
+	}
+	return out
+}
+
+func unit(kind, detail string, object model.ObjectRef) model.Grant {
+	return model.Grant{Object: object, Kind: kind, Detail: detail}
+}
+
+func TestWithoutRemovesOnlyTheNamedSubject(t *testing.T) {
+	ix := multiSubjectBinding(t)
+	sa := ServiceAccount(identity(t, ix, "app", "deployer"))
+	binding, _, _ := ix.Entry("ClusterRoleBinding", "", "admin")
+
+	if !IsClusterAdmin(allowed(t, ix, sa)) {
+		t.Fatal("fixture is wrong: the service account is not cluster-admin to begin with")
+	}
+
+	edited, err := Without(ix, []model.Grant{unit("binding-subject", "subject ServiceAccount app/deployer", binding)})
+	if err != nil {
+		t.Fatalf("Without: %v", err)
+	}
+
+	// The group subject still grants cluster-admin to the service account, so
+	// the privilege survives: removing one subject of a binding that also
+	// matches through another is not enough to cut the escalation.
+	_, obj, _ := edited.Entry("ClusterRoleBinding", "", "admin")
+	subjects, _ := obj["subjects"].([]any)
+	if len(subjects) != 1 {
+		t.Fatalf("binding holds %d subjects, want the remaining group one", len(subjects))
+	}
+	if kind, _ := subjects[0].(map[string]any)["kind"].(string); kind != "Group" {
+		t.Errorf("kept subject is %q, want Group", kind)
+	}
+	if !IsClusterAdmin(allowed(t, edited, sa)) {
+		t.Error("removing the ServiceAccount subject dropped the cluster-admin grant the group subject still confers")
+	}
+
+	// Removing the group subject leaves the ServiceAccount subject granting it,
+	// so neither removal alone cuts the escalation.
+	dropped, err := Without(ix, []model.Grant{unit("binding-subject", "subject Group system:authenticated", binding)})
+	if err != nil {
+		t.Fatalf("Without: %v", err)
+	}
+	_, obj, _ = dropped.Entry("ClusterRoleBinding", "", "admin")
+	subjects, _ = obj["subjects"].([]any)
+	if len(subjects) != 1 {
+		t.Fatalf("binding holds %d subjects, want the remaining service account one", len(subjects))
+	}
+	if !IsClusterAdmin(allowed(t, dropped, sa)) {
+		t.Error("removing the group subject dropped the cluster-admin grant the ServiceAccount subject still confers")
+	}
+}
+
+func TestWithoutRemovesEveryDuplicateSubjectEntry(t *testing.T) {
+	ix := snapshot.New()
+	add(t, ix, `{"apiVersion":"v1","kind":"ServiceAccount","metadata":{"name":"deployer","namespace":"app"}}`)
+	add(t, ix, `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRole","metadata":{"name":"reader"},
+		"rules":[{"apiGroups":[""],"resources":["pods"],"verbs":["get"]}]}`)
+	add(t, ix, `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRoleBinding","metadata":{"name":"reader"},
+		"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"ClusterRole","name":"reader"},
+		"subjects":[{"kind":"ServiceAccount","name":"deployer","namespace":"app"},
+		            {"kind":"ServiceAccount","name":"deployer","namespace":"app"}]}`)
+	sa := ServiceAccount(identity(t, ix, "app", "deployer"))
+	binding, _, _ := ix.Entry("ClusterRoleBinding", "", "reader")
+
+	edited, err := Without(ix, []model.Grant{unit("binding-subject", "subject ServiceAccount app/deployer", binding)})
+	if err != nil {
+		t.Fatalf("Without: %v", err)
+	}
+	_, obj, _ := edited.Entry("ClusterRoleBinding", "", "reader")
+	subjects, _ := obj["subjects"].([]any)
+	if len(subjects) != 0 {
+		t.Errorf("binding still holds %d subject entries, want the duplicated one removed as well", len(subjects))
+	}
+	if got := allowed(t, edited, sa); len(got) != 0 {
+		t.Errorf("the grant survived through a duplicate subject entry: %d grants", len(got))
+	}
+}
+
+func TestWithoutRemovesRulesByOriginalIndexInOnePass(t *testing.T) {
+	ix := snapshot.New()
+	add(t, ix, `{"apiVersion":"v1","kind":"ServiceAccount","metadata":{"name":"deployer","namespace":"app"}}`)
+	add(t, ix, `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRole","metadata":{"name":"mixed"},"rules":[
+		{"apiGroups":[""],"resources":["pods"],"verbs":["get"]},
+		{"apiGroups":[""],"resources":["pods"],"verbs":["list"]},
+		{"apiGroups":[""],"resources":["pods"],"verbs":["watch"]}]}`)
+	add(t, ix, `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRoleBinding","metadata":{"name":"mixed"},
+		"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"ClusterRole","name":"mixed"},
+		"subjects":[{"kind":"ServiceAccount","name":"deployer","namespace":"app"}]}`)
+	sa := ServiceAccount(identity(t, ix, "app", "deployer"))
+	role, _, _ := ix.Entry("ClusterRole", "", "mixed")
+
+	// Both indices refer to the original rule list; the second index must not
+	// shift under the removal of the first.
+	edited, err := Without(ix, []model.Grant{
+		unit("role-rule", "rules[0]", role),
+		unit("role-rule", "rules[2]", role),
+	})
+	if err != nil {
+		t.Fatalf("Without: %v", err)
+	}
+	_, obj, _ := edited.Entry("ClusterRole", "", "mixed")
+	rules, _ := obj["rules"].([]any)
+	if len(rules) != 1 {
+		t.Fatalf("role holds %d rules, want only rules[1]", len(rules))
+	}
+	verbs := rules[0].(map[string]any)["verbs"].([]any)
+	if len(verbs) != 1 || verbs[0] != "list" {
+		t.Errorf("surviving rule is %v, want the one at index 1", verbs)
+	}
+	if got := allowed(t, edited, sa); len(got) != 1 || !got[0].Rule.Allows("", "pods", "list") {
+		t.Errorf("effective rules after removal are %v, want only list", got)
+	}
+}
+
+func TestWithoutRejectsUnitsItCannotApply(t *testing.T) {
+	ix := multiSubjectBinding(t)
+	binding, _, _ := ix.Entry("ClusterRoleBinding", "", "admin")
+	role, _, _ := ix.Entry("ClusterRole", "", "cluster-admin")
+	missing := model.ObjectRef{Kind: "ClusterRoleBinding", Name: "absent"}
+
+	for _, tc := range []struct {
+		name  string
+		units []model.Grant
+	}{
+		{"unsupported kind", []model.Grant{unit("scc-user", "scc-user privileged", role)}},
+		{"missing object", []model.Grant{unit("binding-subject", "subject ServiceAccount app/deployer", missing)}},
+		{"rule index out of range", []model.Grant{unit("role-rule", "rules[7]", role)}},
+		{"malformed rule detail", []model.Grant{unit("role-rule", "rules[x]", role)}},
+		{"malformed subject detail", []model.Grant{unit("binding-subject", "subject", binding)}},
+		{"subject without namespace", []model.Grant{unit("binding-subject", "subject ServiceAccount deployer", binding)}},
+		{"rules on a binding", []model.Grant{unit("role-rule", "rules[0]", binding)}},
+		{"subjects on a role", []model.Grant{unit("binding-subject", "subject Group system:authenticated", role)}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			result, err := Without(ix, tc.units)
+			if err == nil {
+				t.Fatal("Without accepted a unit it cannot apply")
+			}
+			if result != nil {
+				t.Error("Without returned an index along with the error")
+			}
+		})
+	}
+}
+
+func TestWithoutKeepsTheInputIndexIntact(t *testing.T) {
+	ix := multiSubjectBinding(t)
+	sa := ServiceAccount(identity(t, ix, "app", "deployer"))
+	binding, _, _ := ix.Entry("ClusterRoleBinding", "", "admin")
+	_, before, _ := ix.Entry("ClusterRoleBinding", "", "admin")
+	beforeCopy, err := json.Marshal(before)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestBefore := ix.Manifest().SHA256
+	grantCountBefore := len(grantsOf(t, ix, sa))
+
+	edited, err := Without(ix, []model.Grant{unit("binding-subject", "subject ServiceAccount app/deployer", binding)})
+	if err != nil {
+		t.Fatalf("Without: %v", err)
+	}
+	if edited == ix {
+		t.Fatal("Without returned the input index itself")
+	}
+
+	_, after, _ := ix.Entry("ClusterRoleBinding", "", "admin")
+	afterCopy, err := json.Marshal(after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(afterCopy) != string(beforeCopy) {
+		t.Errorf("Without modified the input object:\n before %s\n  after %s", beforeCopy, afterCopy)
+	}
+	if got := ix.Manifest().SHA256; got != manifestBefore {
+		t.Errorf("Without changed the input manifest: %s -> %s", manifestBefore, got)
+	}
+	if got := len(grantsOf(t, ix, sa)); got != grantCountBefore {
+		t.Errorf("the input index now yields %d grants, want %d", got, grantCountBefore)
+	}
+}
+
+func TestRemovalSubjectDetailRoundTrip(t *testing.T) {
+	for _, tc := range []struct {
+		detail string
+		want   Principal
+	}{
+		{"subject ServiceAccount app/deployer", Principal{Kind: "ServiceAccount", Namespace: "app", Name: "deployer"}},
+		{"subject User admin", Principal{Kind: "User", Name: "admin"}},
+		{"subject Group system:authenticated", Principal{Kind: "Group", Name: "system:authenticated"}},
+		{"subject User alice smith", Principal{Kind: "User", Name: "alice smith"}},
+		{"subject User kubernetes-admin/oidc", Principal{Kind: "User", Name: "kubernetes-admin/oidc"}},
+	} {
+		t.Run(tc.detail, func(t *testing.T) {
+			got, err := parseSubjectDetail(tc.detail)
+			if err != nil {
+				t.Fatalf("parseSubjectDetail(%q): %v", tc.detail, err)
+			}
+			if got != tc.want {
+				t.Errorf("parseSubjectDetail(%q) = %+v, want %+v", tc.detail, got, tc.want)
+			}
+			if back := subjectDetail(tc.want.Kind, tc.want.Namespace, tc.want.Name); back != tc.detail {
+				t.Errorf("round trip changed the detail: %q -> %q", tc.detail, back)
+			}
+		})
+	}
+}

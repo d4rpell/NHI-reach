@@ -88,6 +88,64 @@ func CatalogEdges(ctx Context) ([]model.Edge, error) {
 	return edges, nil
 }
 
+// Edges derives every edge of a snapshot's graph: the direct cluster-admin edge
+// of each ServiceAccount plus every catalog hop. It is the single derivation of
+// the graph — `analyze` and the hypothetical models that cut verification
+// rebuilds both use it — and its result is ordered by (From, To, HopID).
+//
+// It fails when the snapshot is defective in a way a hop cannot evaluate (a
+// dangling roleRef), so an input defect is never silently left out of the graph.
+func Edges(ix *snapshot.Index) ([]model.Edge, error) {
+	privileged, err := rbac.PrivilegedSubjects(ix)
+	if err != nil {
+		return nil, err
+	}
+
+	var edges []model.Edge
+	for _, sa := range ix.List("ServiceAccount", "") {
+		granted, err := rbac.Effective(ix, rbac.ServiceAccount(sa))
+		if err != nil {
+			return nil, err
+		}
+		edges = append(edges, ClusterAdminEdges(sa, granted)...)
+		catalogEdges, err := CatalogEdges(Context{
+			Index:      ix,
+			Identity:   sa,
+			Granted:    granted,
+			Privileged: privileged,
+		})
+		if err != nil {
+			return nil, err
+		}
+		edges = append(edges, catalogEdges...)
+	}
+
+	sort.Slice(edges, func(i, j int) bool {
+		a, b := edges[i], edges[j]
+		if a.From != b.From {
+			return a.From < b.From
+		}
+		if a.To != b.To {
+			return a.To < b.To
+		}
+		return a.HopID < b.HopID
+	})
+	return edges, nil
+}
+
+// Rebuild derives the edges of the hypothetical model in which the given
+// removal units are no longer granted: the substrate of cut verification (spec
+// §3 step 6). It starts from the snapshot it is given and applies the whole set
+// at once, and never modifies that snapshot — a failed removal is returned as an
+// error, not as an unremoved grant.
+func Rebuild(ix *snapshot.Index, removed []model.Grant) ([]model.Edge, error) {
+	hypothetical, err := rbac.Without(ix, removed)
+	if err != nil {
+		return nil, err
+	}
+	return Edges(hypothetical)
+}
+
 // ClusterAdminEdges emits the direct edge from an identity whose effective
 // permissions are cluster-admin-equivalent to the cluster-admin target.
 //
