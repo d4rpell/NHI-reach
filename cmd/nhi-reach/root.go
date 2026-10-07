@@ -24,5 +24,10 @@ func newRootCmd() *cobra.Command {
 		newRulesCmd(),
 		newVersionCmd(),
 	)
+	// A bad flag value or an unknown flag is an input error (spec §4, exit 3),
+	// not the unclassified internal error that anything else maps to.
+	root.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
+		return exitf(3, "%v", err)
+	})
 	return root
 }

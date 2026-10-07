@@ -1,0 +1,6 @@
+SOURCE        TARGET         HOPS  CONFIDENCE   ROUTE
+app/deployer  cluster-admin  2     conditional  app/deployer -[NR-001]-> app/ops-admin -[rbac-cluster-admin]-> cluster-admin
+
+gaps:
+  Pod: snapshot has no pods; hops that depend on them are not evaluated
+  SecurityContextConstraints: snapshot has no securitycontextconstraints; hops that depend on them are not evaluated
