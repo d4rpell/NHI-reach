@@ -12,6 +12,9 @@ docs/specs/
 /bin/
 /dist/
 *.exe
+*.test
+coverage.out
+cover.out
 
 # Entorno
 .env
