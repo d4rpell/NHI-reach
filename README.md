@@ -1,6 +1,6 @@
 # nhi-reach
 
-**Estado (2026-10-07): spec aprobada (rev. 3, T0-01 cerrado); dirección, arquitectura y enfoque del motor aceptados. Sin código todavía.** Este README es el documento de trabajo en español; la versión pública se escribe en inglés en T3-03.
+**Estado (2026-10-07): spec de diseño aprobada (rev. 3); dirección, arquitectura y enfoque del motor aceptados; tipos compartidos congelados (T0-04). Existe el andamiaje Go (`go 1.23`, CLI Cobra con `snapshot`, `analyze`, `rules` y `version`), pero todavía no hay lógica de análisis: la primera versión usable de punta a punta, `analyze --from DIR -o table`, llega con T1-00.** Este README es el documento de trabajo en español; la versión pública se escribe en inglés en T3-03.
 
 > ¿Hasta dónde puede llegar esta identidad no humana?
 
@@ -38,4 +38,4 @@ Las decisiones de diseño, el backlog y la spec de diseño se mantienen en docum
 
 ## Stack previsto
 
-Go con Cobra, client-go (solo en modo live), salida en tabla/JSON/HTML (SARIF fuera del MVP), plantilla HTML embebida con la librería de grafos inline y GoReleaser. Las versiones exactas se fijan en la tarea de scaffolding (T0-03).
+Go con Cobra, client-go (solo en modo live), salida en tabla/JSON/HTML (SARIF fuera del MVP), plantilla HTML embebida con la librería de grafos inline y GoReleaser. El andamiaje (T0-03) ya fija el módulo `github.com/d4rpell/nhi-reach` en `go 1.23` con Cobra; las demás versiones se fijan al implementar cada pieza.
