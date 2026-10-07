@@ -167,7 +167,7 @@ func validateTargets(targets []string) error {
 func buildEdges(ix *snapshot.Index) ([]model.Edge, error) {
 	var edges []model.Edge
 	for _, sa := range ix.List("ServiceAccount", "") {
-		granted, err := rbac.Effective(ix, sa)
+		granted, err := rbac.Effective(ix, rbac.ServiceAccount(sa))
 		if err != nil {
 			return nil, exitf(3, "%v", err)
 		}

@@ -32,7 +32,7 @@ func identity(t *testing.T, ix *snapshot.Index, namespace, name string) model.Ob
 
 func permissions(t *testing.T, ix *snapshot.Index, sa model.ObjectRef) []rbac.Granted {
 	t.Helper()
-	granted, err := rbac.Effective(ix, sa)
+	granted, err := rbac.Effective(ix, rbac.ServiceAccount(sa))
 	if err != nil {
 		t.Fatalf("Effective: %v", err)
 	}
@@ -159,5 +159,136 @@ func TestClusterAdminEdgesEmptyWithoutPermission(t *testing.T) {
 	sa := identity(t, ix, "app", "ops")
 	if edges := ClusterAdminEdges(sa, nil); len(edges) != 0 {
 		t.Fatalf("unprivileged identity produced %d cluster-admin edges, want 0", len(edges))
+	}
+}
+
+func TestWorkloadCreationUsesBindingNamespace(t *testing.T) {
+	ix := workloadFixture(t)
+	add(t, ix, `{"apiVersion":"v1","kind":"ServiceAccount","metadata":{"name":"worker","namespace":"other"}}`)
+	// The RoleBinding lives in "other" and names the "app" deployer: the grant
+	// reaches the service accounts of "other", never those of "app".
+	add(t, ix, `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"Role","metadata":{"name":"creator","namespace":"other"},
+		"rules":[{"apiGroups":[""],"resources":["pods"],"verbs":["create"]}]}`)
+	add(t, ix, `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"RoleBinding","metadata":{"name":"creator","namespace":"other"},
+		"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"Role","name":"creator"},
+		"subjects":[{"kind":"ServiceAccount","name":"deployer","namespace":"app"}]}`)
+
+	sa := identity(t, ix, "app", "deployer")
+	edges := WorkloadCreation(ix, sa, permissions(t, ix, sa))
+	want := []string{"sa:other/other", "sa:other/worker"}
+	if got := edgeTargets(edges); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("binding in namespace other reached %v, want the service accounts of other %v", got, want)
+	}
+}
+
+func TestWorkloadCreationClusterScopedReachesEveryNamespace(t *testing.T) {
+	ix := workloadFixture(t)
+	add(t, ix, `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRole","metadata":{"name":"creator"},
+		"rules":[{"apiGroups":[""],"resources":["pods"],"verbs":["create"]}]}`)
+	add(t, ix, `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRoleBinding","metadata":{"name":"creator"},
+		"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"ClusterRole","name":"creator"},
+		"subjects":[{"kind":"ServiceAccount","name":"deployer","namespace":"app"}]}`)
+
+	sa := identity(t, ix, "app", "deployer")
+	edges := WorkloadCreation(ix, sa, permissions(t, ix, sa))
+	want := []string{"sa:app/ops-admin", "sa:other/other"}
+	if got := edgeTargets(edges); strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Fatalf("cluster-scoped create reached %v, want every other service account %v", got, want)
+	}
+}
+
+func TestCollectGrantsDeduplicatesIdenticalUnits(t *testing.T) {
+	role := model.ObjectRef{Kind: "ClusterRole", Name: "reader"}
+	binding := model.ObjectRef{Kind: "ClusterRoleBinding", Name: "readers"}
+	rule := model.Grant{Object: role, Kind: "role-rule", Detail: "rules[0]"}
+	subjectA := model.Grant{Object: binding, Kind: "binding-subject", Detail: "subject Group system:authenticated"}
+	subjectB := model.Grant{Object: binding, Kind: "binding-subject", Detail: "subject Group system:serviceaccounts"}
+
+	got := collectGrants([]rbac.Granted{
+		{Grants: []model.Grant{subjectA, rule}},
+		{Grants: []model.Grant{subjectB, rule}},
+	})
+	if len(got) != 3 {
+		t.Fatalf("collectGrants returned %d units, want the two subjects and one role-rule", len(got))
+	}
+	// Ordered by (object kind, namespace, name, unit kind, detail): the
+	// ClusterRole sorts before the ClusterRoleBinding, and the two subjects are
+	// kept distinct.
+	if got[0].Detail != "rules[0]" || got[0].Kind != "role-rule" {
+		t.Errorf("first unit is %v, want the role-rule", got[0])
+	}
+	if got[1].Detail != "subject Group system:authenticated" || got[2].Detail != "subject Group system:serviceaccounts" {
+		t.Errorf("binding-subject units were not preserved: %v", got[1:])
+	}
+}
+
+func edgeTargets(edges []model.Edge) []string {
+	out := make([]string, 0, len(edges))
+	for _, e := range edges {
+		out = append(out, e.To)
+	}
+	return out
+}
+
+func evidenceKeys(refs []model.ObjectRef) []string {
+	out := make([]string, 0, len(refs))
+	for _, ref := range refs {
+		out = append(out, ref.Kind+"/"+ref.Namespace+"/"+ref.Name)
+	}
+	return out
+}
+
+func hasString(values []string, want string) bool {
+	for _, v := range values {
+		if v == want {
+			return true
+		}
+	}
+	return false
+}
+
+func TestWorkloadCreationAttributesGrantsToEachDestination(t *testing.T) {
+	ix := workloadFixture(t)
+	add(t, ix, `{"apiVersion":"v1","kind":"ServiceAccount","metadata":{"name":"deployer","namespace":"other"}}`)
+	// A cluster-scoped grant covers every namespace; a namespaced grant covers
+	// only its own. Each edge must carry the grants that reach its destination,
+	// and the origin's homonym in another namespace must still be a destination.
+	add(t, ix, `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRole","metadata":{"name":"creator"},
+		"rules":[{"apiGroups":[""],"resources":["pods"],"verbs":["create"]}]}`)
+	add(t, ix, `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRoleBinding","metadata":{"name":"global-creator"},
+		"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"ClusterRole","name":"creator"},
+		"subjects":[{"kind":"ServiceAccount","name":"deployer","namespace":"app"}]}`)
+	add(t, ix, `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"Role","metadata":{"name":"creator","namespace":"other"},
+		"rules":[{"apiGroups":[""],"resources":["pods"],"verbs":["create"]}]}`)
+	add(t, ix, `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"RoleBinding","metadata":{"name":"other-creator","namespace":"other"},
+		"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"Role","name":"creator"},
+		"subjects":[{"kind":"ServiceAccount","name":"deployer","namespace":"app"}]}`)
+
+	sa := identity(t, ix, "app", "deployer")
+	edges := WorkloadCreation(ix, sa, permissions(t, ix, sa))
+
+	want := "sa:app/ops-admin,sa:other/deployer,sa:other/other"
+	if got := strings.Join(edgeTargets(edges), ","); got != want {
+		t.Fatalf("edges reach %v, want %v (the origin app/deployer is never a destination)", got, want)
+	}
+	for _, edge := range edges {
+		ev := evidenceKeys(edge.Evidence)
+		global := hasString(ev, "ClusterRoleBinding//global-creator")
+		scoped := hasString(ev, "RoleBinding/other/other-creator")
+		if edge.To == "sa:app/ops-admin" {
+			if !global || scoped {
+				t.Errorf("edge to %s carries %v, want only the cluster-scoped grant", edge.To, ev)
+			}
+			if len(edge.Grants) != 2 {
+				t.Errorf("edge to %s removes %d units, want the cluster-scoped binding-subject and role-rule", edge.To, len(edge.Grants))
+			}
+			continue
+		}
+		if !global || !scoped {
+			t.Errorf("edge to %s carries %v, want both the cluster-scoped and the namespaced grant", edge.To, ev)
+		}
+		if len(edge.Grants) != 4 {
+			t.Errorf("edge to %s removes %d units, want both grants' binding-subject and role-rule", edge.To, len(edge.Grants))
+		}
 	}
 }

@@ -80,9 +80,11 @@ func ClusterAdminEdges(sa model.ObjectRef, granted []rbac.Granted) []model.Edge 
 	}}
 }
 
-// WorkloadCreation emits one edge from sa to every other ServiceAccount of its
-// namespace when sa may create Pods there (hop NR-001).
+// WorkloadCreation emits one edge from sa to every other ServiceAccount that
+// sa may run inside a workload, when sa may create Pods there (hop NR-001).
 //
+// The reach of the permission is the scope of its grant: a RoleBinding grants
+// it inside the binding's namespace, a ClusterRoleBinding in every namespace.
 // The edges are "conditional", not "definite": the RBAC rule is what the model
 // proves, but the escalation itself needs the created workload to be admitted
 // and run as the target service account, and admission is a step the model does
@@ -98,14 +100,24 @@ func WorkloadCreation(ix *snapshot.Index, sa model.ObjectRef, granted []rbac.Gra
 		return nil
 	}
 
-	targets := ix.List("ServiceAccount", sa.Namespace)
-	edges := make([]model.Edge, 0, len(targets))
-	for _, target := range targets {
-		if target.Name == sa.Name {
-			continue
+	byTarget := map[model.ObjectRef][]rbac.Granted{}
+	for _, g := range granting {
+		targets := ix.List("ServiceAccount", g.Binding.Namespace)
+		if g.ClusterScoped {
+			targets = ix.List("ServiceAccount", "")
 		}
+		for _, target := range targets {
+			if target.Namespace == sa.Namespace && target.Name == sa.Name {
+				continue
+			}
+			byTarget[target] = append(byTarget[target], g)
+		}
+	}
+
+	edges := make([]model.Edge, 0, len(byTarget))
+	for target, grants := range byTarget {
 		refs := append([]model.ObjectRef{sa}, target)
-		for _, g := range granting {
+		for _, g := range grants {
 			refs = append(refs, g.Source, g.Binding)
 		}
 		edges = append(edges, model.Edge{
@@ -113,7 +125,7 @@ func WorkloadCreation(ix *snapshot.Index, sa model.ObjectRef, granted []rbac.Gra
 			To:         IdentityID(target),
 			HopID:      NR001.ID,
 			Evidence:   dedupeRefs(refs),
-			Grants:     collectGrants(granting),
+			Grants:     collectGrants(grants),
 			Confidence: "conditional",
 		})
 	}
@@ -121,10 +133,20 @@ func WorkloadCreation(ix *snapshot.Index, sa model.ObjectRef, granted []rbac.Gra
 	return edges
 }
 
+// collectGrants flattens the removal units of the given grants, drops exact
+// duplicates (the same unit can be produced once per matching subject) and
+// orders them deterministically.
 func collectGrants(granted []rbac.Granted) []model.Grant {
 	var out []model.Grant
+	seen := map[model.Grant]bool{}
 	for _, g := range granted {
-		out = append(out, g.Grants...)
+		for _, unit := range g.Grants {
+			if seen[unit] {
+				continue
+			}
+			seen[unit] = true
+			out = append(out, unit)
+		}
 	}
 	sort.Slice(out, func(i, j int) bool {
 		a, b := out[i].Object, out[j].Object
