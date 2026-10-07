@@ -1,6 +1,6 @@
 # nhi-reach
 
-**Estado (2026-10-07): versión light funcionando de punta a punta (T1-00); spec de diseño aprobada (rev. 3); tipos compartidos congelados (T0-04).** `nhi-reach analyze --from DIR -o table` ya lee un snapshot offline, resuelve los permisos directos de cada ServiceAccount y traza la ruta más corta por origen hasta `cluster-admin`, encadenando dos tipos de arista: el binding directo y el salto **NR-001** (poder crear workloads en un namespace da el nivel de acceso de cualquier ServiceAccount de ese namespace, según la documentación oficial de Kubernetes). Todavía **no** hay cortes, ni salida JSON/HTML, ni modo live; los permisos efectivos cubren solo sujetos directos, sin grupos implícitos, agregación ni `resourceNames`; el objetivo evaluado es `cluster-admin`. El catálogo completo de saltos llega con T1-03/T1-04 y la evidencia impresa con T2-01/T2-03. Este README es el documento de trabajo en español; la versión pública se escribe en inglés en T3-03.
+**Estado (2026-10-07): el motor de análisis y la superficie de salida están completos; la versión light corre de punta a punta.** `nhi-reach analyze --from DIR -o table|json` lee un snapshot offline, resuelve los permisos efectivos de cada ServiceAccount (grupos implícitos, `resourceNames`, ClusterRoles agregados materializados) y enumera las rutas de escalada hasta los objetivos de `cluster-admin` y `secrets`, encadenando el binding directo y los seis saltos del catálogo aprobado (NR-001…NR-006). El informe de tabla y el esquema JSON v1 (`schema_version: 1`) salen con `--out`; los cortes por ruta se verifican en el modelo y los cuellos de botella se proponen como cobertura verificada. Todavía **no** hay salida HTML ni modo live (T2-03/T2-04), y el objetivo `node` no se evalúa: se acepta y se reporta como `gap` hasta que exista la representación del efecto de workload. Este README es el documento de trabajo en español; la versión pública se escribe en inglés en T3-03.
 
 > ¿Hasta dónde puede llegar esta identidad no humana?
 
@@ -28,7 +28,7 @@ Estado de estas herramientas consultado el 2026-10-07 vía la API de GitHub: [Ku
 
 - **Solo lectura**, siempre: nunca crea, modifica ni ejecuta nada en el clúster.
 - **Offline primero**: analiza snapshots exportados; el modo live previsto usará únicamente `get`/`list`.
-- **Determinista**: mismo snapshot → misma salida, byte a byte (hoy la tabla; el JSON llega con T2-01).
+- **Determinista**: mismo snapshot → misma salida, byte a byte (tabla y JSON, con golden files comparados byte a byte).
 - **Evidence-first** (misma línea que Ariadne): cada arista lleva referencias a los objetos que la habilitan, con su hash.
 - **Nunca guarda valores de Secrets**: solo metadatos, `type` y los nombres de clave de `data`/`stringData` ([reglas de evidencia](docs/evidence.md)).
 
@@ -36,11 +36,12 @@ Estado de estas herramientas consultado el 2026-10-07 vía la API de GitHub: [Ku
 
 ```bash
 go run ./cmd/nhi-reach analyze --from testdata/light/hit
+go run ./cmd/nhi-reach analyze --from testdata/light/hit -o json --out report.json
 ```
 
-Imprime una fila por ruta alcanzada (origen, objetivo, número de saltos, confianza y la secuencia de saltos) y, debajo, los `gaps` del análisis. Los dos fixtures del repo son sintéticos: `testdata/light/hit` tiene una ruta esperada y `testdata/light/miss` no tiene ninguna. El formato de entrada es el JSON de `kubectl get <recurso> -o json`, una lista o un objeto suelto por fichero.
+La tabla imprime una fila por ruta (origen, objetivo, número de saltos, confianza, si la ruta atraviesa una identidad de sistema y el mejor corte con su estado de verificación), agrupada por objetivo, con las rutas nacidas en identidades de sistema en un bloque aparte, y debajo los `gaps` del análisis. El JSON es el esquema versionado v1 (`schema_version: 1`). Los fixtures del repo son sintéticos: `testdata/light/hit` tiene rutas esperadas, `testdata/light/miss` no tiene ninguna y `testdata/light/secrets` ejercita el objetivo `secrets`. El formato de entrada es el JSON de `kubectl get <recurso> -o json`, una lista o un objeto suelto por fichero.
 
-Hoy funcionan `--from`, `-o table`, `--max-depth`, `--from-identity`, `--system-ns`, `--include-system` y `--target cluster-admin`. Cualquier otro flag o valor que la herramienta todavía no implementa (por ejemplo `-o json`, `--live`, `--target node`) termina con código de salida 3 en lugar de ignorarse en silencio; con `go run`, `go` lo presenta como `exit status 3` y devuelve 1, mientras que el binario devuelve 3.
+Están cableados todos los flags de análisis: `--from`, `-o table|json`, `--out`, `--max-depth`, `--paths-per-pair`, `--from-identity`, `--target cluster-admin|node|secrets` (repetible; por defecto los tres), `--sensitive-ns` (amplía la lista por defecto), `--system-ns`, `--include-system` y `--fail-on none|any`. Lo que todavía no se implementa (`--live`, `-o html`) termina con código de salida 3 en lugar de ignorarse en silencio; `--target node` se acepta y se reporta como `gap`. Códigos de salida: 0 análisis completo, 1 error no clasificado (incluida la E/S de `--out`), 2 `--fail-on any` con hallazgos, 3 error de entrada. Con `go run`, `go` presenta el código como `exit status N` y devuelve 1, mientras que el binario devuelve el código real.
 
 ## Documentación
 

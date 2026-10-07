@@ -20,6 +20,15 @@ import (
 // TargetClusterAdmin is the node id of the cluster-admin goal.
 const TargetClusterAdmin = "target:cluster-admin"
 
+// TargetSecrets is the node id of the secrets goal (spec §2.5).
+const TargetSecrets = "target:secrets"
+
+// secretReadHopID names the edge to the secrets goal. Like the direct
+// cluster-admin edge it is not a catalog hop: spec §2.5 defines the goal and the
+// T1-03 note records that reading Secrets of a sensitive namespace is that goal,
+// not a hop of the catalog.
+const secretReadHopID = "rbac-secret-read"
+
 // Hop ids. They mirror the ids of the embedded catalog; a guard test keeps the
 // two sets equal in both directions.
 const (
@@ -88,6 +97,14 @@ func CatalogEdges(ctx Context) ([]model.Edge, error) {
 	return edges, nil
 }
 
+// Options carries the derivation parameters that are not part of the snapshot.
+type Options struct {
+	// SensitiveNamespace reports whether a namespace holds Secrets whose read
+	// access is the secrets goal of spec §2.5. A nil matcher derives no edge to
+	// that goal: an absent list is not an empty list.
+	SensitiveNamespace func(namespace string) bool
+}
+
 // Edges derives every edge of a snapshot's graph: the direct cluster-admin edge
 // of each ServiceAccount plus every catalog hop. It is the single derivation of
 // the graph — `analyze` and the hypothetical models that cut verification
@@ -96,18 +113,31 @@ func CatalogEdges(ctx Context) ([]model.Edge, error) {
 // It fails when the snapshot is defective in a way a hop cannot evaluate (a
 // dangling roleRef), so an input defect is never silently left out of the graph.
 func Edges(ix *snapshot.Index) ([]model.Edge, error) {
+	return edges(ix, Options{})
+}
+
+// EdgesWith derives the edges of the graph for a configuration: the edges of
+// Edges plus the edges to the secrets goal when a sensitive-namespace matcher is
+// given. Analysis and cut verification both derive their edges here, so a
+// hypothetical model holds exactly the edges the analysis considered.
+func EdgesWith(ix *snapshot.Index, opts Options) ([]model.Edge, error) {
+	return edges(ix, opts)
+}
+
+func edges(ix *snapshot.Index, opts Options) ([]model.Edge, error) {
 	privileged, err := rbac.PrivilegedSubjects(ix)
 	if err != nil {
 		return nil, err
 	}
 
-	var edges []model.Edge
+	var out []model.Edge
 	for _, sa := range ix.List("ServiceAccount", "") {
 		granted, err := rbac.Effective(ix, rbac.ServiceAccount(sa))
 		if err != nil {
 			return nil, err
 		}
-		edges = append(edges, ClusterAdminEdges(sa, granted)...)
+		out = append(out, ClusterAdminEdges(sa, granted)...)
+		out = append(out, SecretReadEdges(ix, sa, granted, opts)...)
 		catalogEdges, err := CatalogEdges(Context{
 			Index:      ix,
 			Identity:   sa,
@@ -117,11 +147,11 @@ func Edges(ix *snapshot.Index) ([]model.Edge, error) {
 		if err != nil {
 			return nil, err
 		}
-		edges = append(edges, catalogEdges...)
+		out = append(out, catalogEdges...)
 	}
 
-	sort.Slice(edges, func(i, j int) bool {
-		a, b := edges[i], edges[j]
+	sort.Slice(out, func(i, j int) bool {
+		a, b := out[i], out[j]
 		if a.From != b.From {
 			return a.From < b.From
 		}
@@ -130,7 +160,7 @@ func Edges(ix *snapshot.Index) ([]model.Edge, error) {
 		}
 		return a.HopID < b.HopID
 	})
-	return edges, nil
+	return out, nil
 }
 
 // Rebuild derives the edges of the hypothetical model in which the given
@@ -139,11 +169,108 @@ func Edges(ix *snapshot.Index) ([]model.Edge, error) {
 // at once, and never modifies that snapshot — a failed removal is returned as an
 // error, not as an unremoved grant.
 func Rebuild(ix *snapshot.Index, removed []model.Grant) ([]model.Edge, error) {
+	return RebuildWith(ix, removed, Options{})
+}
+
+// RebuildWith is Rebuild for a configuration: it applies the removals to a copy
+// of the index and re-derives the edges through EdgesWith with the same options,
+// so the hypothetical model includes exactly the secrets edges the analysis
+// considered.
+func RebuildWith(ix *snapshot.Index, removed []model.Grant, opts Options) ([]model.Edge, error) {
 	hypothetical, err := rbac.Without(ix, removed)
 	if err != nil {
 		return nil, err
 	}
-	return Edges(hypothetical)
+	return EdgesWith(hypothetical, opts)
+}
+
+// SecretReadEdges emits the edge from an identity that may read Secrets of a
+// sensitive namespace to the secrets goal (spec §2.5).
+//
+// The rule must allow get or list on secrets of the core group. The scope then
+// decides the namespace: a cluster-scoped grant reaches every namespace, a
+// namespaced one only its own. When the rule restricts the read to resourceNames,
+// the escalation is only real if a Secret that satisfies the name, the namespace
+// and the scope at once exists in the snapshot; a rule without resourceNames is
+// the capability itself, so no Secret has to be observed for the edge to hold —
+// the absence of objects does not remove a permission.
+//
+// The edge is "definite": the authorization decision is the rule itself. It
+// states the effective permission in the model, never that a Secret was read.
+func SecretReadEdges(ix *snapshot.Index, sa model.ObjectRef, granted []rbac.Granted, opts Options) []model.Edge {
+	if opts.SensitiveNamespace == nil {
+		return nil
+	}
+
+	var refs []model.ObjectRef
+	var units []rbac.Granted
+	for _, g := range granted {
+		if !g.Rule.Matches("", "secrets", "get") && !g.Rule.Matches("", "secrets", "list") {
+			continue
+		}
+		if len(g.Rule.ResourceNames) == 0 {
+			if !grantReachesSensitiveNamespace(g, opts) {
+				continue
+			}
+		} else {
+			// The named Secrets that justify the read are evidence of the edge:
+			// without them the escalation rests on a name no object backs.
+			named := grantNamedSensitiveSecrets(ix, g, opts)
+			if len(named) == 0 {
+				continue
+			}
+			refs = append(refs, named...)
+		}
+		units = append(units, g)
+	}
+	if len(units) == 0 {
+		return nil
+	}
+
+	refs = append(refs, sa)
+	for _, g := range units {
+		refs = append(refs, g.Source, g.Binding)
+	}
+	return []model.Edge{{
+		From:       IdentityID(sa),
+		To:         TargetSecrets,
+		HopID:      secretReadHopID,
+		Evidence:   dedupeRefs(refs),
+		Grants:     collectGrants(units),
+		Confidence: "definite",
+	}}
+}
+
+// grantReachesSensitiveNamespace reports whether the scope of a grant covers a
+// namespace the sensitive list matches: a cluster-scoped grant covers all of
+// them, a namespaced one only its own.
+func grantReachesSensitiveNamespace(g rbac.Granted, opts Options) bool {
+	if g.ClusterScoped {
+		return true
+	}
+	return opts.SensitiveNamespace(g.Binding.Namespace)
+}
+
+// grantNamedSensitiveSecrets returns the Secrets of the snapshot that a grant
+// restricted by resourceNames lets its subject read: each one satisfies the
+// name, the sensitive namespace and the scope of the grant at once. A name the
+// rule lists that only exists outside the grant's scope is not a read the grant
+// authorizes. The list is ordered as ix.List returns it (kind, namespace, name),
+// so the evidence is deterministic.
+func grantNamedSensitiveSecrets(ix *snapshot.Index, g rbac.Granted, opts Options) []model.ObjectRef {
+	var out []model.ObjectRef
+	for _, secret := range ix.List("Secret", "") {
+		if !opts.SensitiveNamespace(secret.Namespace) {
+			continue
+		}
+		if !g.ClusterScoped && secret.Namespace != g.Binding.Namespace {
+			continue
+		}
+		if g.Rule.AllowsName("", "secrets", secret.Name, "get") || g.Rule.AllowsName("", "secrets", secret.Name, "list") {
+			out = append(out, secret)
+		}
+	}
+	return out
 }
 
 // ClusterAdminEdges emits the direct edge from an identity whose effective

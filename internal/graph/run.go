@@ -30,7 +30,7 @@ const (
 )
 
 // Options configures one analysis run. Sources and Targets are required; the
-// numeric fields and System are normalized by Solve.
+// numeric fields, System and Sensitive are normalized by Solve.
 type Options struct {
 	Sources       []string // origin node ids; at least one
 	Targets       []string // target node ids; at least one
@@ -40,6 +40,13 @@ type Options struct {
 	MaxCoverSteps int      // cap on cover steps; 0 means DefaultMaxCoverSteps
 	RemainingCap  int      // cap on the work of RemainingPaths; 0 means DefaultRemainingCap
 	System        []string // system namespaces (spec §2.6); nil means the default list
+	Sensitive     []string // sensitive namespaces (spec §2.5); nil means the default list
+}
+
+// DefaultSensitiveNamespaces is the sensitive-namespace list of spec §2.5:
+// kube-system and the openshift-* namespaces.
+func DefaultSensitiveNamespaces() SystemNamespaces {
+	return SystemNamespaces{"kube-system", "openshift-*"}
 }
 
 // Pair is one (origin, target) pair of the analysis.
@@ -233,6 +240,11 @@ func (o Options) normalized() (Options, error) {
 	// be guessed.
 	if o.System == nil {
 		o.System = append([]string(nil), DefaultSystemNamespaces()...)
+	}
+	// The sensitive list of §2.5 follows the same rule: nil means the default,
+	// an empty non-nil list means no sensitive namespace.
+	if o.Sensitive == nil {
+		o.Sensitive = append([]string(nil), DefaultSensitiveNamespaces()...)
 	}
 	return o, nil
 }

@@ -925,3 +925,203 @@ func TestWorkloadCreationAttributesGrantsToEachDestination(t *testing.T) {
 		}
 	}
 }
+
+func secretFixture(t *testing.T) *snapshot.Index {
+	t.Helper()
+	ix := snapshot.New()
+	add(t, ix, `{"apiVersion":"v1","kind":"ServiceAccount","metadata":{"name":"reader","namespace":"app"}}`)
+	add(t, ix, `{"apiVersion":"v1","kind":"Secret","metadata":{"name":"token","namespace":"kube-system"}}`)
+	return ix
+}
+
+func secretMatcher(namespaces ...string) Options {
+	want := map[string]bool{}
+	for _, ns := range namespaces {
+		want[ns] = true
+	}
+	return Options{SensitiveNamespace: func(ns string) bool { return want[ns] }}
+}
+
+func TestSecretReadEdgesUnrestrictedReachesSensitiveNamespace(t *testing.T) {
+	ix := secretFixture(t)
+	add(t, ix, `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRole","metadata":{"name":"r"},
+		"rules":[{"apiGroups":[""],"resources":["secrets"],"verbs":["get"]}]}`)
+	add(t, ix, `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRoleBinding","metadata":{"name":"b"},
+		"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"ClusterRole","name":"r"},
+		"subjects":[{"kind":"ServiceAccount","name":"reader","namespace":"app"}]}`)
+
+	sa := identity(t, ix, "app", "reader")
+	edges := SecretReadEdges(ix, sa, permissions(t, ix, sa), secretMatcher("kube-system"))
+	if len(edges) != 1 || edges[0].To != TargetSecrets {
+		t.Fatalf("got %d edges, want 1 to %s: %+v", len(edges), TargetSecrets, edges)
+	}
+	if edges[0].Confidence != "definite" {
+		t.Errorf("confidence is %q, want definite", edges[0].Confidence)
+	}
+}
+
+func TestSecretReadEdgesNamespacedScopeMustMatchSecret(t *testing.T) {
+	ix := secretFixture(t)
+	add(t, ix, `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"Role","metadata":{"name":"r","namespace":"app"},
+		"rules":[{"apiGroups":[""],"resources":["secrets"],"verbs":["get"]}]}`)
+	add(t, ix, `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"RoleBinding","metadata":{"name":"b","namespace":"app"},
+		"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"Role","name":"r"},
+		"subjects":[{"kind":"ServiceAccount","name":"reader","namespace":"app"}]}`)
+
+	sa := identity(t, ix, "app", "reader")
+	// The sensitive namespace is kube-system, but the grant only reaches app.
+	if edges := SecretReadEdges(ix, sa, permissions(t, ix, sa), secretMatcher("kube-system")); len(edges) != 0 {
+		t.Errorf("a namespaced read reached a Secret of another namespace: %+v", edges)
+	}
+	// The grant reaches app, so making app sensitive produces the edge.
+	if edges := SecretReadEdges(ix, sa, permissions(t, ix, sa), secretMatcher("app")); len(edges) != 1 {
+		t.Errorf("got %d edges for a sensitive namespaced scope, want 1", len(edges))
+	}
+}
+
+func TestSecretReadEdgesResourceNamesNeedsExistingSensitiveSecret(t *testing.T) {
+	ix := secretFixture(t)
+	add(t, ix, `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRole","metadata":{"name":"r"},
+		"rules":[{"apiGroups":[""],"resources":["secrets"],"resourceNames":["token"],"verbs":["get"]}]}`)
+	add(t, ix, `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRoleBinding","metadata":{"name":"b"},
+		"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"ClusterRole","name":"r"},
+		"subjects":[{"kind":"ServiceAccount","name":"reader","namespace":"app"}]}`)
+
+	sa := identity(t, ix, "app", "reader")
+	// token exists in kube-system, which is sensitive: the read is real.
+	if edges := SecretReadEdges(ix, sa, permissions(t, ix, sa), secretMatcher("kube-system")); len(edges) != 1 {
+		t.Errorf("a resourceNames read backed by an existing sensitive Secret did not fire: %+v", edges)
+	}
+	// No sensitive namespace holds token: the name is not a read the grant allows.
+	if edges := SecretReadEdges(ix, sa, permissions(t, ix, sa), secretMatcher("other")); len(edges) != 0 {
+		t.Errorf("a resourceNames read without a matching sensitive Secret fired: %+v", edges)
+	}
+}
+
+func TestSecretReadEdgesUnrestrictedWithoutSecrets(t *testing.T) {
+	ix := snapshot.New()
+	add(t, ix, `{"apiVersion":"v1","kind":"ServiceAccount","metadata":{"name":"reader","namespace":"app"}}`)
+	add(t, ix, `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRole","metadata":{"name":"r"},
+		"rules":[{"apiGroups":[""],"resources":["secrets"],"verbs":["get"]}]}`)
+	add(t, ix, `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRoleBinding","metadata":{"name":"b"},
+		"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"ClusterRole","name":"r"},
+		"subjects":[{"kind":"ServiceAccount","name":"reader","namespace":"app"}]}`)
+
+	sa := identity(t, ix, "app", "reader")
+	edges := SecretReadEdges(ix, sa, permissions(t, ix, sa), secretMatcher("kube-system"))
+	if len(edges) != 1 {
+		t.Fatalf("an unrestricted read was dropped with no Secrets in the snapshot: %+v", edges)
+	}
+}
+
+func TestSecretReadEdgesNilMatcherEmitsNothing(t *testing.T) {
+	ix := secretFixture(t)
+	add(t, ix, `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRole","metadata":{"name":"r"},
+		"rules":[{"apiGroups":[""],"resources":["secrets"],"verbs":["get"]}]}`)
+	add(t, ix, `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRoleBinding","metadata":{"name":"b"},
+		"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"ClusterRole","name":"r"},
+		"subjects":[{"kind":"ServiceAccount","name":"reader","namespace":"app"}]}`)
+
+	sa := identity(t, ix, "app", "reader")
+	if edges := SecretReadEdges(ix, sa, permissions(t, ix, sa), Options{}); len(edges) != 0 {
+		t.Errorf("a nil sensitive matcher emitted %d edges", len(edges))
+	}
+}
+
+func TestRebuildWithKeepsSecretEdgesConsistent(t *testing.T) {
+	ix := secretFixture(t)
+	add(t, ix, `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRole","metadata":{"name":"r"},
+		"rules":[{"apiGroups":[""],"resources":["secrets"],"verbs":["get"]}]}`)
+	add(t, ix, `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRoleBinding","metadata":{"name":"b"},
+		"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"ClusterRole","name":"r"},
+		"subjects":[{"kind":"ServiceAccount","name":"reader","namespace":"app"}]}`)
+
+	opts := secretMatcher("kube-system")
+	before, err := EdgesWith(ix, opts)
+	if err != nil {
+		t.Fatalf("EdgesWith: %v", err)
+	}
+	if !hasEdgeTo(before, TargetSecrets) {
+		t.Fatalf("EdgesWith did not derive the secrets edge: %+v", before)
+	}
+
+	grant := model.Grant{
+		Object: mustRef(t, ix, "ClusterRoleBinding", "", "b"),
+		Kind:   "binding-subject",
+		Detail: "subject ServiceAccount app/reader",
+	}
+	after, err := RebuildWith(ix, []model.Grant{grant}, opts)
+	if err != nil {
+		t.Fatalf("RebuildWith: %v", err)
+	}
+	if hasEdgeTo(after, TargetSecrets) {
+		t.Errorf("the secrets edge survived removing its only grant: %+v", after)
+	}
+}
+
+func hasEdgeTo(edges []model.Edge, target string) bool {
+	for _, edge := range edges {
+		if edge.To == target {
+			return true
+		}
+	}
+	return false
+}
+
+func mustRef(t *testing.T, ix *snapshot.Index, kind, namespace, name string) model.ObjectRef {
+	t.Helper()
+	ref, ok := ix.Get(kind, namespace, name)
+	if !ok {
+		t.Fatalf("%s %s/%s not indexed", kind, namespace, name)
+	}
+	return ref
+}
+
+func TestCatalogSHA256IsStable(t *testing.T) {
+	first := CatalogSHA256()
+	if len(first) != 64 {
+		t.Fatalf("catalog hash %q is not a hex SHA-256", first)
+	}
+	if first != CatalogSHA256() {
+		t.Errorf("catalog hash is not stable across calls")
+	}
+}
+
+func TestSecretReadEdgesListWithResourceNamesFires(t *testing.T) {
+	ix := secretFixture(t)
+	add(t, ix, `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRole","metadata":{"name":"r"},
+		"rules":[{"apiGroups":[""],"resources":["secrets"],"resourceNames":["token"],"verbs":["list"]}]}`)
+	add(t, ix, `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRoleBinding","metadata":{"name":"b"},
+		"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"ClusterRole","name":"r"},
+		"subjects":[{"kind":"ServiceAccount","name":"reader","namespace":"app"}]}`)
+
+	sa := identity(t, ix, "app", "reader")
+	edges := SecretReadEdges(ix, sa, permissions(t, ix, sa), secretMatcher("kube-system"))
+	if len(edges) != 1 {
+		t.Fatalf("a list-only resourceNames read did not fire: %+v", edges)
+	}
+}
+
+func TestSecretReadEdgesNamesTheJustifyingSecret(t *testing.T) {
+	ix := secretFixture(t)
+	add(t, ix, `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRole","metadata":{"name":"r"},
+		"rules":[{"apiGroups":[""],"resources":["secrets"],"resourceNames":["token"],"verbs":["get"]}]}`)
+	add(t, ix, `{"apiVersion":"rbac.authorization.k8s.io/v1","kind":"ClusterRoleBinding","metadata":{"name":"b"},
+		"roleRef":{"apiGroup":"rbac.authorization.k8s.io","kind":"ClusterRole","name":"r"},
+		"subjects":[{"kind":"ServiceAccount","name":"reader","namespace":"app"}]}`)
+
+	sa := identity(t, ix, "app", "reader")
+	edges := SecretReadEdges(ix, sa, permissions(t, ix, sa), secretMatcher("kube-system"))
+	if len(edges) != 1 {
+		t.Fatalf("got %d edges, want 1", len(edges))
+	}
+	found := false
+	for _, ref := range edges[0].Evidence {
+		if ref.Kind == "Secret" && ref.Namespace == "kube-system" && ref.Name == "token" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("the justifying Secret is not in the evidence: %+v", edges[0].Evidence)
+	}
+}

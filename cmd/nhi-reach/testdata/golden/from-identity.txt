@@ -1,5 +1,8 @@
-SOURCE        TARGET         HOPS  CONFIDENCE   ROUTE
-app/deployer  cluster-admin  2     conditional  app/deployer -[NR-001]-> app/ops-admin -[rbac-cluster-admin]-> cluster-admin
+target: cluster-admin
+SOURCE        TARGET         HOPS  CONFIDENCE   VIA-SYSTEM  BEST-CUT                                                                                         ROUTE
+app/deployer  cluster-admin  2     conditional  -           remove subject ServiceAccount app/deployer from RoleBinding app/deployer-pod-creator (verified)  app/deployer -[NR-001]-> app/ops-admin -[NR-004]-> cluster-admin
+app/deployer  cluster-admin  2     conditional  -           remove subject ServiceAccount app/deployer from RoleBinding app/deployer-pod-creator (verified)  app/deployer -[NR-001]-> app/ops-admin -[NR-005]-> cluster-admin
+app/deployer  cluster-admin  2     conditional  -           remove subject ServiceAccount app/deployer from RoleBinding app/deployer-pod-creator (verified)  app/deployer -[NR-001]-> app/ops-admin -[rbac-cluster-admin]-> cluster-admin
 
 gaps:
   Pod: snapshot has no pods; hops that depend on them are not evaluated

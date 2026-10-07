@@ -450,3 +450,25 @@ func TestReachAgreesWithShortestPath(t *testing.T) {
 		}
 	}
 }
+
+func TestSolveNormalizesSensitiveNamespaces(t *testing.T) {
+	// nil means the default sensitive list; a non-nil empty list means none.
+	// Both are expressible, so neither is guessed.
+	opts := Options{Sources: []string{"s"}, Targets: []string{"t"}}
+	normalized, err := opts.normalized()
+	if err != nil {
+		t.Fatalf("normalized: %v", err)
+	}
+	if len(normalized.Sensitive) == 0 {
+		t.Errorf("a nil Sensitive list did not fall back to the default")
+	}
+
+	empty := Options{Sources: []string{"s"}, Targets: []string{"t"}, Sensitive: []string{}}
+	normalized, err = empty.normalized()
+	if err != nil {
+		t.Fatalf("normalized: %v", err)
+	}
+	if len(normalized.Sensitive) != 0 {
+		t.Errorf("an empty non-nil Sensitive list was replaced by the default: %v", normalized.Sensitive)
+	}
+}

@@ -1,0 +1,711 @@
+{
+  "schema_version": 1,
+  "params": {
+    "max_depth": 4,
+    "paths_per_pair": 3,
+    "targets": [
+      "cluster-admin"
+    ],
+    "from_identity": "",
+    "include_system": false,
+    "system_namespaces": [
+      "kube-system",
+      "kube-public",
+      "kube-node-lease",
+      "openshift",
+      "openshift-*"
+    ],
+    "sensitive_namespaces": [
+      "kube-system",
+      "openshift-*"
+    ]
+  },
+  "paths": [
+    {
+      "id": "1c301218e42062d1e809541aa706394e98dc99fc6ed843fa1e654b187ff1e48c",
+      "source": "sa:app/deployer",
+      "target": "target:cluster-admin",
+      "hops": 2,
+      "confidence": "conditional",
+      "via_system": false,
+      "system_origin": false,
+      "route": [
+        {
+          "from": "sa:app/deployer",
+          "to": "sa:app/ops-admin",
+          "hop_id": "NR-001",
+          "confidence": "conditional",
+          "evidence": [
+            {
+              "api_version": "rbac.authorization.k8s.io/v1",
+              "kind": "Role",
+              "namespace": "app",
+              "name": "pod-creator",
+              "sha256": "2b35944da74453ff5288948bb45a59592094f0617d5165895a5078443c653bbc"
+            },
+            {
+              "api_version": "rbac.authorization.k8s.io/v1",
+              "kind": "RoleBinding",
+              "namespace": "app",
+              "name": "deployer-pod-creator",
+              "sha256": "fd4e52b8e65c0d5eac1407b5c3c4c8f65cf90e22b76d0fa32a0a5fe061f0ef25"
+            },
+            {
+              "api_version": "v1",
+              "kind": "ServiceAccount",
+              "namespace": "app",
+              "name": "deployer",
+              "sha256": "41c72f3d8b404db5bc2dadba90e6ecbe14801e7169c05907f8c7c80021ee9138"
+            },
+            {
+              "api_version": "v1",
+              "kind": "ServiceAccount",
+              "namespace": "app",
+              "name": "ops-admin",
+              "sha256": "cd099dc1d0d787012b5091b31ddad630cd42871c2b6fef3e8a9f1f69a4a631f5"
+            }
+          ]
+        },
+        {
+          "from": "sa:app/ops-admin",
+          "to": "target:cluster-admin",
+          "hop_id": "NR-004",
+          "confidence": "definite",
+          "evidence": [
+            {
+              "api_version": "rbac.authorization.k8s.io/v1",
+              "kind": "ClusterRole",
+              "namespace": "",
+              "name": "cluster-admin",
+              "sha256": "007fa44599f260c6849e89b37b326585cf0be609e3d7ce15a1747098b2848d96"
+            },
+            {
+              "api_version": "rbac.authorization.k8s.io/v1",
+              "kind": "ClusterRoleBinding",
+              "namespace": "",
+              "name": "ops-admin-cluster-admin",
+              "sha256": "7b5e8536241d4e05684f3bca227d9c9920456e615156e03b013b367a994f6e92"
+            },
+            {
+              "api_version": "v1",
+              "kind": "ServiceAccount",
+              "namespace": "app",
+              "name": "ops-admin",
+              "sha256": "cd099dc1d0d787012b5091b31ddad630cd42871c2b6fef3e8a9f1f69a4a631f5"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "58c8cfb9e3cb69626cb4682dc0d154fad91ed98e132cc367f01a7a642991ceef",
+      "source": "sa:app/deployer",
+      "target": "target:cluster-admin",
+      "hops": 2,
+      "confidence": "conditional",
+      "via_system": false,
+      "system_origin": false,
+      "route": [
+        {
+          "from": "sa:app/deployer",
+          "to": "sa:app/ops-admin",
+          "hop_id": "NR-001",
+          "confidence": "conditional",
+          "evidence": [
+            {
+              "api_version": "rbac.authorization.k8s.io/v1",
+              "kind": "Role",
+              "namespace": "app",
+              "name": "pod-creator",
+              "sha256": "2b35944da74453ff5288948bb45a59592094f0617d5165895a5078443c653bbc"
+            },
+            {
+              "api_version": "rbac.authorization.k8s.io/v1",
+              "kind": "RoleBinding",
+              "namespace": "app",
+              "name": "deployer-pod-creator",
+              "sha256": "fd4e52b8e65c0d5eac1407b5c3c4c8f65cf90e22b76d0fa32a0a5fe061f0ef25"
+            },
+            {
+              "api_version": "v1",
+              "kind": "ServiceAccount",
+              "namespace": "app",
+              "name": "deployer",
+              "sha256": "41c72f3d8b404db5bc2dadba90e6ecbe14801e7169c05907f8c7c80021ee9138"
+            },
+            {
+              "api_version": "v1",
+              "kind": "ServiceAccount",
+              "namespace": "app",
+              "name": "ops-admin",
+              "sha256": "cd099dc1d0d787012b5091b31ddad630cd42871c2b6fef3e8a9f1f69a4a631f5"
+            }
+          ]
+        },
+        {
+          "from": "sa:app/ops-admin",
+          "to": "target:cluster-admin",
+          "hop_id": "NR-005",
+          "confidence": "definite",
+          "evidence": [
+            {
+              "api_version": "rbac.authorization.k8s.io/v1",
+              "kind": "ClusterRole",
+              "namespace": "",
+              "name": "cluster-admin",
+              "sha256": "007fa44599f260c6849e89b37b326585cf0be609e3d7ce15a1747098b2848d96"
+            },
+            {
+              "api_version": "rbac.authorization.k8s.io/v1",
+              "kind": "ClusterRoleBinding",
+              "namespace": "",
+              "name": "ops-admin-cluster-admin",
+              "sha256": "7b5e8536241d4e05684f3bca227d9c9920456e615156e03b013b367a994f6e92"
+            },
+            {
+              "api_version": "v1",
+              "kind": "ServiceAccount",
+              "namespace": "app",
+              "name": "ops-admin",
+              "sha256": "cd099dc1d0d787012b5091b31ddad630cd42871c2b6fef3e8a9f1f69a4a631f5"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "6460d966e3e21b8d6c7037f0762b1a6b57490388fd9cd5b8b40bd3b5f388b5c8",
+      "source": "sa:app/deployer",
+      "target": "target:cluster-admin",
+      "hops": 2,
+      "confidence": "conditional",
+      "via_system": false,
+      "system_origin": false,
+      "route": [
+        {
+          "from": "sa:app/deployer",
+          "to": "sa:app/ops-admin",
+          "hop_id": "NR-001",
+          "confidence": "conditional",
+          "evidence": [
+            {
+              "api_version": "rbac.authorization.k8s.io/v1",
+              "kind": "Role",
+              "namespace": "app",
+              "name": "pod-creator",
+              "sha256": "2b35944da74453ff5288948bb45a59592094f0617d5165895a5078443c653bbc"
+            },
+            {
+              "api_version": "rbac.authorization.k8s.io/v1",
+              "kind": "RoleBinding",
+              "namespace": "app",
+              "name": "deployer-pod-creator",
+              "sha256": "fd4e52b8e65c0d5eac1407b5c3c4c8f65cf90e22b76d0fa32a0a5fe061f0ef25"
+            },
+            {
+              "api_version": "v1",
+              "kind": "ServiceAccount",
+              "namespace": "app",
+              "name": "deployer",
+              "sha256": "41c72f3d8b404db5bc2dadba90e6ecbe14801e7169c05907f8c7c80021ee9138"
+            },
+            {
+              "api_version": "v1",
+              "kind": "ServiceAccount",
+              "namespace": "app",
+              "name": "ops-admin",
+              "sha256": "cd099dc1d0d787012b5091b31ddad630cd42871c2b6fef3e8a9f1f69a4a631f5"
+            }
+          ]
+        },
+        {
+          "from": "sa:app/ops-admin",
+          "to": "target:cluster-admin",
+          "hop_id": "rbac-cluster-admin",
+          "confidence": "definite",
+          "evidence": [
+            {
+              "api_version": "rbac.authorization.k8s.io/v1",
+              "kind": "ClusterRole",
+              "namespace": "",
+              "name": "cluster-admin",
+              "sha256": "007fa44599f260c6849e89b37b326585cf0be609e3d7ce15a1747098b2848d96"
+            },
+            {
+              "api_version": "rbac.authorization.k8s.io/v1",
+              "kind": "ClusterRoleBinding",
+              "namespace": "",
+              "name": "ops-admin-cluster-admin",
+              "sha256": "7b5e8536241d4e05684f3bca227d9c9920456e615156e03b013b367a994f6e92"
+            },
+            {
+              "api_version": "v1",
+              "kind": "ServiceAccount",
+              "namespace": "app",
+              "name": "ops-admin",
+              "sha256": "cd099dc1d0d787012b5091b31ddad630cd42871c2b6fef3e8a9f1f69a4a631f5"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "29af4e44f1ba55dffb4cb49dbbb0ec217ee202455f31d42bfe96b98bf55b7cb3",
+      "source": "sa:app/ops-admin",
+      "target": "target:cluster-admin",
+      "hops": 1,
+      "confidence": "definite",
+      "via_system": false,
+      "system_origin": false,
+      "route": [
+        {
+          "from": "sa:app/ops-admin",
+          "to": "target:cluster-admin",
+          "hop_id": "NR-005",
+          "confidence": "definite",
+          "evidence": [
+            {
+              "api_version": "rbac.authorization.k8s.io/v1",
+              "kind": "ClusterRole",
+              "namespace": "",
+              "name": "cluster-admin",
+              "sha256": "007fa44599f260c6849e89b37b326585cf0be609e3d7ce15a1747098b2848d96"
+            },
+            {
+              "api_version": "rbac.authorization.k8s.io/v1",
+              "kind": "ClusterRoleBinding",
+              "namespace": "",
+              "name": "ops-admin-cluster-admin",
+              "sha256": "7b5e8536241d4e05684f3bca227d9c9920456e615156e03b013b367a994f6e92"
+            },
+            {
+              "api_version": "v1",
+              "kind": "ServiceAccount",
+              "namespace": "app",
+              "name": "ops-admin",
+              "sha256": "cd099dc1d0d787012b5091b31ddad630cd42871c2b6fef3e8a9f1f69a4a631f5"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "9f767522d50c9564f36b7177e5b44f74481212618a702749ec6882b767d24f51",
+      "source": "sa:app/ops-admin",
+      "target": "target:cluster-admin",
+      "hops": 1,
+      "confidence": "definite",
+      "via_system": false,
+      "system_origin": false,
+      "route": [
+        {
+          "from": "sa:app/ops-admin",
+          "to": "target:cluster-admin",
+          "hop_id": "NR-004",
+          "confidence": "definite",
+          "evidence": [
+            {
+              "api_version": "rbac.authorization.k8s.io/v1",
+              "kind": "ClusterRole",
+              "namespace": "",
+              "name": "cluster-admin",
+              "sha256": "007fa44599f260c6849e89b37b326585cf0be609e3d7ce15a1747098b2848d96"
+            },
+            {
+              "api_version": "rbac.authorization.k8s.io/v1",
+              "kind": "ClusterRoleBinding",
+              "namespace": "",
+              "name": "ops-admin-cluster-admin",
+              "sha256": "7b5e8536241d4e05684f3bca227d9c9920456e615156e03b013b367a994f6e92"
+            },
+            {
+              "api_version": "v1",
+              "kind": "ServiceAccount",
+              "namespace": "app",
+              "name": "ops-admin",
+              "sha256": "cd099dc1d0d787012b5091b31ddad630cd42871c2b6fef3e8a9f1f69a4a631f5"
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "b51be0c61cda50fce89898ff85d43dd820effbf02a28d37ef79467ca28ecb015",
+      "source": "sa:app/ops-admin",
+      "target": "target:cluster-admin",
+      "hops": 1,
+      "confidence": "definite",
+      "via_system": false,
+      "system_origin": false,
+      "route": [
+        {
+          "from": "sa:app/ops-admin",
+          "to": "target:cluster-admin",
+          "hop_id": "rbac-cluster-admin",
+          "confidence": "definite",
+          "evidence": [
+            {
+              "api_version": "rbac.authorization.k8s.io/v1",
+              "kind": "ClusterRole",
+              "namespace": "",
+              "name": "cluster-admin",
+              "sha256": "007fa44599f260c6849e89b37b326585cf0be609e3d7ce15a1747098b2848d96"
+            },
+            {
+              "api_version": "rbac.authorization.k8s.io/v1",
+              "kind": "ClusterRoleBinding",
+              "namespace": "",
+              "name": "ops-admin-cluster-admin",
+              "sha256": "7b5e8536241d4e05684f3bca227d9c9920456e615156e03b013b367a994f6e92"
+            },
+            {
+              "api_version": "v1",
+              "kind": "ServiceAccount",
+              "namespace": "app",
+              "name": "ops-admin",
+              "sha256": "cd099dc1d0d787012b5091b31ddad630cd42871c2b6fef3e8a9f1f69a4a631f5"
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "cuts": [
+    {
+      "path_id": "1c301218e42062d1e809541aa706394e98dc99fc6ed843fa1e654b187ff1e48c",
+      "grant": {
+        "object": {
+          "api_version": "rbac.authorization.k8s.io/v1",
+          "kind": "RoleBinding",
+          "namespace": "app",
+          "name": "deployer-pod-creator",
+          "sha256": "fd4e52b8e65c0d5eac1407b5c3c4c8f65cf90e22b76d0fa32a0a5fe061f0ef25"
+        },
+        "kind": "binding-subject",
+        "detail": "subject ServiceAccount app/deployer"
+      },
+      "change": "remove subject ServiceAccount app/deployer from RoleBinding app/deployer-pod-creator",
+      "verified": true,
+      "remaining_paths": 0
+    },
+    {
+      "path_id": "1c301218e42062d1e809541aa706394e98dc99fc6ed843fa1e654b187ff1e48c",
+      "grant": {
+        "object": {
+          "api_version": "rbac.authorization.k8s.io/v1",
+          "kind": "ClusterRoleBinding",
+          "namespace": "",
+          "name": "ops-admin-cluster-admin",
+          "sha256": "7b5e8536241d4e05684f3bca227d9c9920456e615156e03b013b367a994f6e92"
+        },
+        "kind": "binding-subject",
+        "detail": "subject ServiceAccount app/ops-admin"
+      },
+      "change": "remove subject ServiceAccount app/ops-admin from ClusterRoleBinding ops-admin-cluster-admin",
+      "verified": true,
+      "remaining_paths": 0
+    },
+    {
+      "path_id": "1c301218e42062d1e809541aa706394e98dc99fc6ed843fa1e654b187ff1e48c",
+      "grant": {
+        "object": {
+          "api_version": "rbac.authorization.k8s.io/v1",
+          "kind": "Role",
+          "namespace": "app",
+          "name": "pod-creator",
+          "sha256": "2b35944da74453ff5288948bb45a59592094f0617d5165895a5078443c653bbc"
+        },
+        "kind": "role-rule",
+        "detail": "rules[0]"
+      },
+      "change": "remove rules[0] from Role app/pod-creator",
+      "verified": true,
+      "remaining_paths": 0
+    },
+    {
+      "path_id": "1c301218e42062d1e809541aa706394e98dc99fc6ed843fa1e654b187ff1e48c",
+      "grant": {
+        "object": {
+          "api_version": "rbac.authorization.k8s.io/v1",
+          "kind": "ClusterRole",
+          "namespace": "",
+          "name": "cluster-admin",
+          "sha256": "007fa44599f260c6849e89b37b326585cf0be609e3d7ce15a1747098b2848d96"
+        },
+        "kind": "role-rule",
+        "detail": "rules[0]"
+      },
+      "change": "remove rules[0] from ClusterRole cluster-admin",
+      "verified": true,
+      "remaining_paths": 0
+    },
+    {
+      "path_id": "29af4e44f1ba55dffb4cb49dbbb0ec217ee202455f31d42bfe96b98bf55b7cb3",
+      "grant": {
+        "object": {
+          "api_version": "rbac.authorization.k8s.io/v1",
+          "kind": "ClusterRoleBinding",
+          "namespace": "",
+          "name": "ops-admin-cluster-admin",
+          "sha256": "7b5e8536241d4e05684f3bca227d9c9920456e615156e03b013b367a994f6e92"
+        },
+        "kind": "binding-subject",
+        "detail": "subject ServiceAccount app/ops-admin"
+      },
+      "change": "remove subject ServiceAccount app/ops-admin from ClusterRoleBinding ops-admin-cluster-admin",
+      "verified": true,
+      "remaining_paths": 0
+    },
+    {
+      "path_id": "29af4e44f1ba55dffb4cb49dbbb0ec217ee202455f31d42bfe96b98bf55b7cb3",
+      "grant": {
+        "object": {
+          "api_version": "rbac.authorization.k8s.io/v1",
+          "kind": "ClusterRole",
+          "namespace": "",
+          "name": "cluster-admin",
+          "sha256": "007fa44599f260c6849e89b37b326585cf0be609e3d7ce15a1747098b2848d96"
+        },
+        "kind": "role-rule",
+        "detail": "rules[0]"
+      },
+      "change": "remove rules[0] from ClusterRole cluster-admin",
+      "verified": true,
+      "remaining_paths": 0
+    },
+    {
+      "path_id": "58c8cfb9e3cb69626cb4682dc0d154fad91ed98e132cc367f01a7a642991ceef",
+      "grant": {
+        "object": {
+          "api_version": "rbac.authorization.k8s.io/v1",
+          "kind": "RoleBinding",
+          "namespace": "app",
+          "name": "deployer-pod-creator",
+          "sha256": "fd4e52b8e65c0d5eac1407b5c3c4c8f65cf90e22b76d0fa32a0a5fe061f0ef25"
+        },
+        "kind": "binding-subject",
+        "detail": "subject ServiceAccount app/deployer"
+      },
+      "change": "remove subject ServiceAccount app/deployer from RoleBinding app/deployer-pod-creator",
+      "verified": true,
+      "remaining_paths": 0
+    },
+    {
+      "path_id": "58c8cfb9e3cb69626cb4682dc0d154fad91ed98e132cc367f01a7a642991ceef",
+      "grant": {
+        "object": {
+          "api_version": "rbac.authorization.k8s.io/v1",
+          "kind": "ClusterRoleBinding",
+          "namespace": "",
+          "name": "ops-admin-cluster-admin",
+          "sha256": "7b5e8536241d4e05684f3bca227d9c9920456e615156e03b013b367a994f6e92"
+        },
+        "kind": "binding-subject",
+        "detail": "subject ServiceAccount app/ops-admin"
+      },
+      "change": "remove subject ServiceAccount app/ops-admin from ClusterRoleBinding ops-admin-cluster-admin",
+      "verified": true,
+      "remaining_paths": 0
+    },
+    {
+      "path_id": "58c8cfb9e3cb69626cb4682dc0d154fad91ed98e132cc367f01a7a642991ceef",
+      "grant": {
+        "object": {
+          "api_version": "rbac.authorization.k8s.io/v1",
+          "kind": "Role",
+          "namespace": "app",
+          "name": "pod-creator",
+          "sha256": "2b35944da74453ff5288948bb45a59592094f0617d5165895a5078443c653bbc"
+        },
+        "kind": "role-rule",
+        "detail": "rules[0]"
+      },
+      "change": "remove rules[0] from Role app/pod-creator",
+      "verified": true,
+      "remaining_paths": 0
+    },
+    {
+      "path_id": "58c8cfb9e3cb69626cb4682dc0d154fad91ed98e132cc367f01a7a642991ceef",
+      "grant": {
+        "object": {
+          "api_version": "rbac.authorization.k8s.io/v1",
+          "kind": "ClusterRole",
+          "namespace": "",
+          "name": "cluster-admin",
+          "sha256": "007fa44599f260c6849e89b37b326585cf0be609e3d7ce15a1747098b2848d96"
+        },
+        "kind": "role-rule",
+        "detail": "rules[0]"
+      },
+      "change": "remove rules[0] from ClusterRole cluster-admin",
+      "verified": true,
+      "remaining_paths": 0
+    },
+    {
+      "path_id": "6460d966e3e21b8d6c7037f0762b1a6b57490388fd9cd5b8b40bd3b5f388b5c8",
+      "grant": {
+        "object": {
+          "api_version": "rbac.authorization.k8s.io/v1",
+          "kind": "RoleBinding",
+          "namespace": "app",
+          "name": "deployer-pod-creator",
+          "sha256": "fd4e52b8e65c0d5eac1407b5c3c4c8f65cf90e22b76d0fa32a0a5fe061f0ef25"
+        },
+        "kind": "binding-subject",
+        "detail": "subject ServiceAccount app/deployer"
+      },
+      "change": "remove subject ServiceAccount app/deployer from RoleBinding app/deployer-pod-creator",
+      "verified": true,
+      "remaining_paths": 0
+    },
+    {
+      "path_id": "6460d966e3e21b8d6c7037f0762b1a6b57490388fd9cd5b8b40bd3b5f388b5c8",
+      "grant": {
+        "object": {
+          "api_version": "rbac.authorization.k8s.io/v1",
+          "kind": "ClusterRoleBinding",
+          "namespace": "",
+          "name": "ops-admin-cluster-admin",
+          "sha256": "7b5e8536241d4e05684f3bca227d9c9920456e615156e03b013b367a994f6e92"
+        },
+        "kind": "binding-subject",
+        "detail": "subject ServiceAccount app/ops-admin"
+      },
+      "change": "remove subject ServiceAccount app/ops-admin from ClusterRoleBinding ops-admin-cluster-admin",
+      "verified": true,
+      "remaining_paths": 0
+    },
+    {
+      "path_id": "6460d966e3e21b8d6c7037f0762b1a6b57490388fd9cd5b8b40bd3b5f388b5c8",
+      "grant": {
+        "object": {
+          "api_version": "rbac.authorization.k8s.io/v1",
+          "kind": "Role",
+          "namespace": "app",
+          "name": "pod-creator",
+          "sha256": "2b35944da74453ff5288948bb45a59592094f0617d5165895a5078443c653bbc"
+        },
+        "kind": "role-rule",
+        "detail": "rules[0]"
+      },
+      "change": "remove rules[0] from Role app/pod-creator",
+      "verified": true,
+      "remaining_paths": 0
+    },
+    {
+      "path_id": "6460d966e3e21b8d6c7037f0762b1a6b57490388fd9cd5b8b40bd3b5f388b5c8",
+      "grant": {
+        "object": {
+          "api_version": "rbac.authorization.k8s.io/v1",
+          "kind": "ClusterRole",
+          "namespace": "",
+          "name": "cluster-admin",
+          "sha256": "007fa44599f260c6849e89b37b326585cf0be609e3d7ce15a1747098b2848d96"
+        },
+        "kind": "role-rule",
+        "detail": "rules[0]"
+      },
+      "change": "remove rules[0] from ClusterRole cluster-admin",
+      "verified": true,
+      "remaining_paths": 0
+    },
+    {
+      "path_id": "9f767522d50c9564f36b7177e5b44f74481212618a702749ec6882b767d24f51",
+      "grant": {
+        "object": {
+          "api_version": "rbac.authorization.k8s.io/v1",
+          "kind": "ClusterRoleBinding",
+          "namespace": "",
+          "name": "ops-admin-cluster-admin",
+          "sha256": "7b5e8536241d4e05684f3bca227d9c9920456e615156e03b013b367a994f6e92"
+        },
+        "kind": "binding-subject",
+        "detail": "subject ServiceAccount app/ops-admin"
+      },
+      "change": "remove subject ServiceAccount app/ops-admin from ClusterRoleBinding ops-admin-cluster-admin",
+      "verified": true,
+      "remaining_paths": 0
+    },
+    {
+      "path_id": "9f767522d50c9564f36b7177e5b44f74481212618a702749ec6882b767d24f51",
+      "grant": {
+        "object": {
+          "api_version": "rbac.authorization.k8s.io/v1",
+          "kind": "ClusterRole",
+          "namespace": "",
+          "name": "cluster-admin",
+          "sha256": "007fa44599f260c6849e89b37b326585cf0be609e3d7ce15a1747098b2848d96"
+        },
+        "kind": "role-rule",
+        "detail": "rules[0]"
+      },
+      "change": "remove rules[0] from ClusterRole cluster-admin",
+      "verified": true,
+      "remaining_paths": 0
+    },
+    {
+      "path_id": "b51be0c61cda50fce89898ff85d43dd820effbf02a28d37ef79467ca28ecb015",
+      "grant": {
+        "object": {
+          "api_version": "rbac.authorization.k8s.io/v1",
+          "kind": "ClusterRoleBinding",
+          "namespace": "",
+          "name": "ops-admin-cluster-admin",
+          "sha256": "7b5e8536241d4e05684f3bca227d9c9920456e615156e03b013b367a994f6e92"
+        },
+        "kind": "binding-subject",
+        "detail": "subject ServiceAccount app/ops-admin"
+      },
+      "change": "remove subject ServiceAccount app/ops-admin from ClusterRoleBinding ops-admin-cluster-admin",
+      "verified": true,
+      "remaining_paths": 0
+    },
+    {
+      "path_id": "b51be0c61cda50fce89898ff85d43dd820effbf02a28d37ef79467ca28ecb015",
+      "grant": {
+        "object": {
+          "api_version": "rbac.authorization.k8s.io/v1",
+          "kind": "ClusterRole",
+          "namespace": "",
+          "name": "cluster-admin",
+          "sha256": "007fa44599f260c6849e89b37b326585cf0be609e3d7ce15a1747098b2848d96"
+        },
+        "kind": "role-rule",
+        "detail": "rules[0]"
+      },
+      "change": "remove rules[0] from ClusterRole cluster-admin",
+      "verified": true,
+      "remaining_paths": 0
+    }
+  ],
+  "bottlenecks": [
+    {
+      "change": "remove rules[0] from ClusterRole cluster-admin",
+      "eliminated": [
+        {
+          "source": "sa:app/deployer",
+          "target": "target:cluster-admin"
+        },
+        {
+          "source": "sa:app/ops-admin",
+          "target": "target:cluster-admin"
+        }
+      ]
+    }
+  ],
+  "cover_complete": true,
+  "gaps": [
+    {
+      "kind": "missing-input",
+      "subject": "Pod",
+      "message": "snapshot has no pods; hops that depend on them are not evaluated"
+    },
+    {
+      "kind": "missing-input",
+      "subject": "SecurityContextConstraints",
+      "message": "snapshot has no securitycontextconstraints; hops that depend on them are not evaluated"
+    }
+  ],
+  "input_manifest_sha256": "5d36a881978d9ea46622aacd97f5ce495762216ff6afcf6e372b8194008787dc",
+  "rules_catalog_sha256": "cb34e377b48efd826ed54630c8d6afd99d7e84333d601e60f5a2718706268d48"
+}

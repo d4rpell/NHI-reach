@@ -100,3 +100,16 @@ func TestViaSystemNeedsAnApplicationOrigin(t *testing.T) {
 		})
 	}
 }
+
+func TestDefaultSensitiveNamespaces(t *testing.T) {
+	sensitive := DefaultSensitiveNamespaces()
+	if !sensitive.Matches("kube-system") {
+		t.Errorf("kube-system is not sensitive by default")
+	}
+	if !sensitive.Matches("openshift-monitoring") {
+		t.Errorf("openshift-* is not sensitive by default")
+	}
+	if sensitive.Matches("app") {
+		t.Errorf("an application namespace is sensitive by default")
+	}
+}

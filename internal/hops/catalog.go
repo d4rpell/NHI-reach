@@ -2,7 +2,9 @@ package hops
 
 import (
 	"bytes"
+	"crypto/sha256"
 	_ "embed"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -39,6 +41,15 @@ var (
 // silent skip.
 func Catalog() ([]CatalogEntry, error) {
 	return parseCatalog(catalogYAML)
+}
+
+// CatalogSHA256 is the hex SHA-256 of the embedded catalog bytes. It identifies
+// the exact catalog a report was produced from and, unlike the link-time
+// version.CatalogHash, it is computed from the same bytes the binary runs, so it
+// is never "unknown" and never depends on how the binary was built.
+func CatalogSHA256() string {
+	sum := sha256.Sum256(catalogYAML)
+	return hex.EncodeToString(sum[:])
 }
 
 // parseCatalog decodes and validates a catalog document. It is separate from
