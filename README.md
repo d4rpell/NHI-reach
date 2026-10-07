@@ -1,38 +1,36 @@
 # nhi-reach
 
-**Estado (2026-10-07): el motor de análisis y la superficie de salida están completos; la versión light corre de punta a punta.** `nhi-reach analyze --from DIR -o table|json|html` lee un snapshot offline, resuelve los permisos efectivos de cada ServiceAccount (grupos implícitos, `resourceNames`, ClusterRoles agregados materializados) y enumera las rutas de escalada hasta los objetivos de `cluster-admin` y `secrets`, encadenando el binding directo y los seis saltos del catálogo aprobado (NR-001…NR-006). El informe de tabla, el esquema JSON v1 (`schema_version: 1`) y un **informe HTML autocontenido** (un solo fichero, sin peticiones de red, con el grafo embebido) salen con `--out`; los cortes por ruta se verifican en el modelo y los cuellos de botella se proponen como cobertura verificada. Todavía **no** hay modo live (T2-04), y el objetivo `node` no se evalúa: se acepta y se reporta como `gap` hasta que exista la representación del efecto de workload. Este README es el documento de trabajo en español; la versión pública se escribe en inglés en T3-03.
+> How far can this non-human identity get?
 
-> ¿Hasta dónde puede llegar esta identidad no humana?
+`nhi-reach` is a defensive, read-only CLI tool that audits non-human identities (NHI) in Kubernetes/OpenShift. It analyzes ServiceAccounts, their tokens and their RBAC/SCC bindings, and computes which **privilege escalation paths** exist from each identity toward three critical targets:
 
-`nhi-reach` es una herramienta defensiva y de solo lectura para auditar identidades no humanas (NHI) en Kubernetes/OpenShift. El diseño analiza ServiceAccounts, sus tokens y sus vínculos RBAC/SCC, y calcula qué **rutas de escalada de privilegios** existen desde cada identidad hacia tres objetivos críticos (la versión light evalúa hoy solo el primero):
+1. Privileges equivalent to `cluster-admin`.
+2. Control of a node (privileged workloads, `hostPath`, permissive SCCs).
+3. Read access to Secrets in sensitive namespaces.
 
-1. Privilegios equivalentes a `cluster-admin`.
-2. Control de un nodo (workloads privilegiados, `hostPath`, SCC permisivas).
-3. Lectura de Secrets de namespaces sensibles.
+Of these, `cluster-admin` and `secrets` are evaluated today; `node` is accepted and reported as a gap until the workload-effect representation exists.
 
-El diseño incluye, para cada ruta, la **evidencia de cada salto** (los objetos RBAC/SCC citados, con hash SHA-256) y **propuestas de corte verificadas en el modelo**: qué concesión concreta retirar (un sujeto de un binding, una regla) y si con eso el objetivo deja de ser alcanzable. La evidencia por arista se imprime en el informe JSON (T2-01) y en el HTML (T2-03).
+**Status (2026-10-07): the analysis engine and the output surface are complete; the light version runs end to end.** `nhi-reach analyze --from DIR -o table|json|html` reads an offline snapshot, resolves the effective permissions of every ServiceAccount (implicit groups, `resourceNames`, materialized aggregated ClusterRoles) and enumerates the escalation paths to the `cluster-admin` and `secrets` targets, chaining the direct binding and the six hops of the approved catalog (NR-001…NR-006). The table report, the versioned JSON schema v1 (`schema_version: 1`) and a **self-contained HTML report** (a single file, no network requests, with the graph embedded) are written with `--out`; per-path cuts are verified in the model and bottlenecks are proposed as a verified cover. There is **no** live mode yet (T2-04), and the `node` target is not evaluated: it is accepted and reported as a `gap` until the workload-effect representation exists.
 
-Por defecto, las identidades de sistema (`kube-system`, `openshift-*`…) no son origen del análisis pero sí pueden ser saltos intermedios; destacar en el informe las rutas que, desde una SA de aplicación, pasan por una de sistema llega con T1-05.
+## Positioning
 
-## Posicionamiento
-
-| Herramienta | Qué hace | Diferencia con nhi-reach |
+| Tool | What it does | Difference with nhi-reach |
 |---|---|---|
-| [nhi-watch](https://github.com/Zyrakk/nhi-watch) | Inventario NHI, scoring por identidad, CIS, drift, inactividad, RBAC mínimo por uso | Evalúa cada identidad aislada y no encadena permisos. **Complementaria**: nhi-reach podría consumir su JSON más adelante |
-| [KubeHound](https://github.com/DataDog/KubeHound) (Datadog) | Grafo de rutas de ataque en K8s | Su README enumera Docker y Docker Compose V2 como requisitos y documenta consultas Gremlin (TinkerPop); también ofrece un modo servicio (KHaaS). nhi-reach es un solo binario offline, centrado en NHI, con cortes verificados en el modelo previstos. En su [portada](https://kubehound.io/) y su [índice de ataques](https://kubehound.io/reference/attacks/), consultados el 2026-10-07, no se encontraron menciones a las SCC de OpenShift |
-| KubiScan / rbac-tool | Permisos de riesgo / visualización RBAC | No calculan cadenas de escalada |
+| [nhi-watch](https://github.com/Zyrakk/nhi-watch) | NHI inventory, per-identity scoring, CIS, drift, inactivity, minimum RBAC by use | Evaluates each identity in isolation and does not chain permissions. **Complementary**: nhi-reach could consume its JSON later |
+| [KubeHound](https://github.com/DataDog/KubeHound) (Datadog) | Attack-path graph in K8s | Its README lists Docker and Docker Compose V2 as requirements and documents Gremlin queries (TinkerPop); it also offers a service mode (KHaaS). nhi-reach is a single offline binary, NHI-focused, with cuts verified in the model. Its [homepage](https://kubehound.io/) and [attacks index](https://kubehound.io/reference/attacks/), checked 2026-10-07, show no mentions of OpenShift SCCs |
+| KubiScan / rbac-tool | Risky permissions / RBAC visualization | They do not compute escalation chains |
 
-Estado de estas herramientas consultado el 2026-10-07 vía la API de GitHub: [KubeHound](https://github.com/DataDog/KubeHound), último push 2026-09-30; [rbac-police](https://github.com/PaloAltoNetworks/rbac-police), archivado; [KubiScan](https://github.com/cyberark/KubiScan) y [rbac-tool](https://github.com/alcideio/rbac-tool), sin pushes desde 2025; [nhi-watch](https://github.com/Zyrakk/nhi-watch), último push 2026-03-16.
+Status of these tools checked 2026-10-07 through the GitHub API: [KubeHound](https://github.com/DataDog/KubeHound), last push 2026-09-30; [rbac-police](https://github.com/PaloAltoNetworks/rbac-police), archived; [KubiScan](https://github.com/cyberark/KubiScan) and [rbac-tool](https://github.com/alcideio/rbac-tool), no pushes since 2025; [nhi-watch](https://github.com/Zyrakk/nhi-watch), last push 2026-03-16.
 
-## Principios
+## Principles
 
-- **Solo lectura**, siempre: nunca crea, modifica ni ejecuta nada en el clúster.
-- **Offline primero**: analiza snapshots exportados; el modo live previsto usará únicamente `get`/`list`.
-- **Determinista**: mismo snapshot → misma salida, byte a byte (tabla, JSON y HTML, con golden files comparados byte a byte).
-- **Evidence-first** (misma línea que Ariadne): cada arista lleva referencias a los objetos que la habilitan, con su hash.
-- **Nunca guarda valores de Secrets**: solo metadatos, `type` y los nombres de clave de `data`/`stringData` ([reglas de evidencia](docs/evidence.md)).
+- **Read-only**, always: it never creates, modifies or executes anything in the cluster.
+- **Offline first**: it analyzes exported snapshots; the planned live mode will use only `get`/`list`.
+- **Deterministic**: same snapshot → same output, byte for byte (table, JSON and HTML, with golden files compared byte for byte).
+- **Evidence-first**: every edge carries references to the objects that enable it, with their SHA-256 hash ([evidence rules](docs/evidence.md)).
+- **Never stores Secret values**: only metadata, `type` and the key names of `data`/`stringData` ([evidence rules](docs/evidence.md)).
 
-## Uso (estado actual)
+## Usage
 
 ```bash
 go run ./cmd/nhi-reach analyze --from testdata/light/hit
@@ -40,14 +38,30 @@ go run ./cmd/nhi-reach analyze --from testdata/light/hit -o json --out report.js
 go run ./cmd/nhi-reach analyze --from testdata/light/hit -o html --out report.html
 ```
 
-La tabla imprime una fila por ruta (origen, objetivo, número de saltos, confianza, si la ruta atraviesa una identidad de sistema y el mejor corte con su estado de verificación), agrupada por objetivo, con las rutas nacidas en identidades de sistema en un bloque aparte, y debajo los `gaps` del análisis. El JSON es el esquema versionado v1 (`schema_version: 1`). El HTML es un único fichero autocontenido: abre sin red (la librería de grafos va embebida, sin CDN ni peticiones), dibuja el grafo de rutas con las identidades de sistema, de aplicación y los objetivos con estilos distintos, y muestra por ruta los saltos, la evidencia, el enlace a la referencia oficial del catálogo, los cortes con su estado de verificación y los cuellos de botella; el contenido se renderiza en Go y sigue siendo legible sin JavaScript (solo falta el grafo). Los fixtures del repo son sintéticos: `testdata/light/hit` tiene rutas esperadas, `testdata/light/miss` no tiene ninguna y `testdata/light/secrets` ejercita el objetivo `secrets`. El formato de entrada es el JSON de `kubectl get <recurso> -o json`, una lista o un objeto suelto por fichero.
+The table prints one row per path (origin, target, hop count, confidence, whether the route crosses a system identity, and the best cut with its verification state), grouped by target, with routes born at system identities in a separate block, followed by the analysis `gaps`. The JSON is the versioned v1 schema (`schema_version: 1`). The HTML is a single self-contained file: it opens with no network (the graph library is embedded, no CDN, no requests), draws the route graph with system identities, application identities and targets styled apart, and shows per path the hops, the evidence, the link to the official catalog reference, the cuts with their verification state and the bottlenecks; the content is rendered in Go and stays readable without JavaScript (only the graph is missing).
 
-Están cableados todos los flags de análisis: `--from`, `-o table|json|html`, `--out`, `--max-depth`, `--paths-per-pair`, `--from-identity`, `--target cluster-admin|node|secrets` (repetible; por defecto los tres), `--sensitive-ns` (amplía la lista por defecto), `--system-ns`, `--include-system` y `--fail-on none|any`. Lo que todavía no se implementa (`--live`) termina con código de salida 3 en lugar de ignorarse en silencio; `--target node` se acepta y se reporta como `gap`. Códigos de salida: 0 análisis completo, 1 error no clasificado (incluida la E/S de `--out`), 2 `--fail-on any` con hallazgos, 3 error de entrada. Con `go run`, `go` presenta el código como `exit status N` y devuelve 1, mientras que el binario devuelve el código real.
+The repository fixtures are synthetic: `testdata/light/hit` has expected paths, `testdata/light/miss` has none, and `testdata/light/secrets` exercises the `secrets` target. The input format is the JSON of `kubectl get <resource> -o json`, a list, or a single object per file.
 
-## Documentación
+Every analysis flag is wired: `--from`, `-o table|json|html`, `--out`, `--max-depth`, `--paths-per-pair`, `--from-identity`, `--target cluster-admin|node|secrets` (repeatable; defaults to all three), `--sensitive-ns` (extends the default list), `--system-ns`, `--include-system` and `--fail-on none|any`. What is not implemented yet (`--live`, `snapshot`) exits with code 3 instead of being silently ignored; `--target node` is accepted and reported as a `gap`. Exit codes: 0 complete analysis, 1 unclassified error (including `--out` I/O), 2 `--fail-on any` with findings, 3 input error. With `go run`, `go` reports the code as `exit status N` and returns 1, while the binary returns the real code.
 
-Las decisiones de diseño, el backlog y la spec de diseño se mantienen en documentación privada del proyecto y no se enlazan desde aquí. La versión pública de este README, en inglés, llega en T3-03.
+Every hop of the catalog cites the official Kubernetes/OpenShift documentation that justifies it (`nhi-reach rules` prints the catalog with its references).
 
-## Stack previsto
+## Building
 
-Go con Cobra, client-go (solo en modo live), salida en tabla/JSON/HTML (SARIF fuera del MVP), plantilla HTML embebida con la librería de grafos inline y GoReleaser. El andamiaje (T0-03) fija el módulo `github.com/d4rpell/nhi-reach` en `go 1.23` con Cobra; el informe HTML (T2-03) embebe [cytoscape.js](THIRD_PARTY_NOTICES.md) (MIT) con `//go:embed`; y la versión light añade los paquetes `internal/snapshot`, `internal/rbac`, `internal/hops`, `internal/graph` y `internal/report`. El `go.mod` declara `go 1.23` como mínimo y fija `toolchain go1.25.13` para la compilación por defecto (los avisos de `html/template` no tienen backport a 1.23/1.24).
+Go 1.23 is the minimum declared in `go.mod`; the `toolchain go1.25.13` directive pins the build toolchain to a release whose standard library has the `html/template` fixes the HTML report needs (those advisories have no 1.23/1.24 backport). `make build` produces `bin/nhi-reach`; `make test`, `make vet`, `make lint` and `make vuln` run the checks CI runs.
+
+## Documentation
+
+- [Evidence rules](docs/evidence.md): what the tool keeps from each resource and why Secret values can never reach a report.
+- [Third-party notices](THIRD_PARTY_NOTICES.md): the embedded graph library (cytoscape.js, MIT), its version, source and pinned digest.
+- Design decisions, the backlog and the design spec are kept in the project's private documentation and are not linked from here.
+
+## Roadmap
+
+- Live mode via client-go, enforcing read-only `get`/`list` verbs in code (T2-04).
+- The `node` target, once the workload-effect representation is decided (needed also for the OpenShift SCC hop, NR-007).
+- v0.1 release: GoReleaser, distroless Docker image, install docs.
+
+## License
+
+[Apache-2.0](LICENSE).
