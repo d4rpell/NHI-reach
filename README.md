@@ -10,6 +10,12 @@
 
 Of these, `cluster-admin` and `secrets` are evaluated today; `node` is accepted and reported as a gap until the workload-effect representation exists.
 
+<p align="center">
+  <a href="examples/lab/demo.gif"><img src="examples/lab/demo.gif" alt="nhi-reach enumerating privilege escalation paths against a lab cluster" width="900"></a>
+  <br>
+  <sub>The <code>table</code> report against a disposable lab cluster with deliberately misconfigured RBAC. The <a href="examples/lab/demo.tape">recording script</a> reproduces it byte for byte; every route in it is synthetic. Click to open full size.</sub>
+</p>
+
 **Status (2026-10-07): the analysis engine and the output surface are complete, and the light version runs end to end online and offline.** `nhi-reach analyze --from DIR -o table|json|html` reads an offline snapshot, resolves the effective permissions of every ServiceAccount (implicit groups, `resourceNames`, materialized aggregated ClusterRoles) and enumerates the escalation paths to the `cluster-admin` and `secrets` targets, chaining the direct binding and the six hops of the approved catalog (NR-001…NR-006). The table report, the versioned JSON schema v1 (`schema_version: 1`) and a **self-contained HTML report** (a single file, no network requests, with the graph embedded) are written with `--out`; per-path cuts are verified in the model and bottlenecks are proposed as a verified cover. **Live mode is available**: `nhi-reach snapshot -o DIR` captures a cluster and `nhi-reach analyze --live` analyzes it directly, always read-only (only `get`/`list`, enforced in the HTTP transport, not just in the docs). The `node` target is not evaluated: it is accepted and reported as a `gap` until the workload-effect representation exists.
 
 ## Positioning

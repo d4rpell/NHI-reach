@@ -12,14 +12,19 @@
 #
 # The recording is deterministic: the snapshot under out/ was captured from the
 # nhi-reach-lab cluster and the analysis output is byte-stable, so re-running the
-# tape reproduces the same GIF. The width is sized so the report table (about
-# 190 columns) never wraps.
+# tape reproduces the same GIF.
+#
+# Width and height are sized to the content, not the other way round: GitHub
+# renders the README at ~830 px, so any empty margin in the GIF is scaled down
+# and shrinks the text. This frame is a single `cluster-admin` block (8 rows,
+# including the route that crosses a system identity) whose widest line is 268
+# columns, and nothing more, so the text stays as large as possible.
 Output demo.gif
 
 Set FontSize 14
-Set Width 2900
-Set Height 700
-Set Padding 30
+Set Width 2560
+Set Height 340
+Set Padding 24
 Set Shell bash
 Set CursorBlink false
 
