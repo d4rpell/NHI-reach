@@ -16,7 +16,13 @@ Of these, `cluster-admin` and `secrets` are evaluated today; `node` is accepted 
   <sub>The <code>table</code> report against a disposable lab cluster with deliberately misconfigured RBAC. The <a href="examples/lab/demo.tape">recording script</a> reproduces it byte for byte; every route in it is synthetic. Click to open full size.</sub>
 </p>
 
-**Status (2026-10-07): the analysis engine and the output surface are complete, and the light version runs end to end online and offline.** `nhi-reach analyze --from DIR -o table|json|html` reads an offline snapshot, resolves the effective permissions of every ServiceAccount (implicit groups, `resourceNames`, materialized aggregated ClusterRoles) and enumerates the escalation paths to the `cluster-admin` and `secrets` targets, chaining the direct binding and the six hops of the approved catalog (NR-001…NR-006). The table report, the versioned JSON schema v1 (`schema_version: 1`) and a **self-contained HTML report** (a single file, no network requests, with the graph embedded) are written with `--out`; per-path cuts are verified in the model and bottlenecks are proposed as a verified cover. **Live mode is available**: `nhi-reach snapshot -o DIR` captures a cluster and `nhi-reach analyze --live` analyzes it directly, always read-only (only `get`/`list`, enforced in the HTTP transport, not just in the docs). The `node` target is not evaluated: it is accepted and reported as a `gap` until the workload-effect representation exists.
+**Status (2026-10-08, v0.1.0): the analysis engine and the output surface are complete, and the light version runs end to end online and offline.** `nhi-reach analyze --from DIR -o table|json|html` reads an offline snapshot, resolves the effective permissions of every ServiceAccount (implicit groups, `resourceNames`, materialized aggregated ClusterRoles) and enumerates the escalation paths to the `cluster-admin` and `secrets` targets, chaining the direct binding and the six hops of the approved catalog (NR-001…NR-006). The table report, the versioned JSON schema v1 (`schema_version: 1`) and a **self-contained HTML report** (a single file, no network requests, with the graph embedded) are written with `--out`; per-path cuts are verified in the model and bottlenecks are proposed as a verified cover. **Live mode is available**: `nhi-reach snapshot -o DIR` captures a cluster and `nhi-reach analyze --live` analyzes it directly, always read-only (only `get`/`list`, enforced in the HTTP transport, not just in the docs). The `node` target is not evaluated: it is accepted and reported as a `gap` until the workload-effect representation exists.
+
+<p align="center">
+  <a href="docs/img/report-html.png"><img src="docs/img/report-html.png" alt="nhi-reach self-contained HTML report with the path graph and the verified cuts" width="900"></a>
+  <br>
+  <sub>The self-contained HTML report: the route graph, the paths with their evidence, and each cut with its verification state. Generated offline from the synthetic lab snapshot; no cluster is contacted.</sub>
+</p>
 
 ## Positioning
 
@@ -35,6 +41,17 @@ Status of these tools checked 2026-10-07 through the GitHub API: [KubeHound](htt
 - **Deterministic**: same snapshot → same output, byte for byte (table, JSON and HTML, with golden files compared byte for byte).
 - **Evidence-first**: every edge carries references to the objects that enable it, with their SHA-256 hash ([evidence rules](docs/evidence.md)).
 - **Never stores Secret values**: only metadata, `type` and the key names of `data`/`stringData` ([evidence rules](docs/evidence.md)).
+
+## Installing
+
+Precompiled binaries for Linux, macOS and Windows (amd64 and arm64), a `go
+install` route and a distroless, non-root container image are all documented in
+[installing nhi-reach](docs/install.md). The short version:
+
+```sh
+go install github.com/d4rpell/nhi-reach/cmd/nhi-reach@v0.1.0     # Go 1.25+
+docker run --rm ghcr.io/d4rpell/nhi-reach:0.1.0 analyze --help
+```
 
 ## Usage
 
@@ -64,15 +81,18 @@ Go 1.25 is the minimum declared in `go.mod`; the `toolchain go1.25.13` directive
 
 ## Documentation
 
+- [Installing](docs/install.md): precompiled binaries, `go install` and the container image.
 - [Evidence rules](docs/evidence.md): what the tool keeps from each resource and why Secret values can never reach a report.
 - [Permissions](docs/permissions.md): the minimal ClusterRole the live mode needs and the read-only guarantee.
 - [Third-party notices](THIRD_PARTY_NOTICES.md): the embedded graph library (cytoscape.js, MIT), its version, source and pinned digest.
+- [Changelog](CHANGELOG.md): release history.
 - Design decisions, the backlog and the design spec are kept in the project's private documentation and are not linked from here.
 
 ## Roadmap
 
 - The `node` target, once the workload-effect representation is decided (needed also for the OpenShift SCC hop, NR-007).
-- v0.1 release: GoReleaser, distroless Docker image, install docs.
+- A `--verify-cuts` opt-in flag, so cut verification can be turned off on very large clusters (measured in the engine benchmark); verification is on by default today.
+- Signing (cosign) and an SBOM for the release artifacts.
 
 ## License
 

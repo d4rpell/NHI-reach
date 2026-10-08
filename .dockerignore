@@ -1,0 +1,26 @@
+# Keep the private material and build artifacts out of the image build context.
+# The Dockerfile copies only go.mod, go.sum, cmd/ and internal/, so this file is
+# defence in depth: it also protects a future `COPY . .` from leaking anything
+# that is private to the project (D-012/D-014).
+.git
+.github
+.gitignore
+.internal
+TODO.md
+AGENTS.md
+CLAUDE.md
+CODEBASE_SUMMARY.md
+CONTEXT_CHANGELOG.md
+docs
+examples
+testdata
+bin
+dist
+report.html
+report.json
+*.exe
+*.test
+coverage.out
+cover.out
+.env
+.env.*

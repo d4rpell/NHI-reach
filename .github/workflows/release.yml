@@ -1,0 +1,128 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+# Least privilege by default; each job elevates only what it needs.
+permissions:
+  contents: read
+
+jobs:
+  # Refuse anything that is not a strict SemVer tag (v1.2.3, optional
+  # -prerelease). The Docker job is independent, so without this gate an
+  # invalid tag could still reach the registry while GoReleaser rejected it.
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check the tag is strict SemVer
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          # SemVer 2.0.0 core + optional pre-release/build, anchored; the leading
+          # v is this project's tag convention. This rejects the malformed forms a
+          # loose pattern accepts (v01.2.3, v1.2.3-01, v1.2.3-a..b) and accepts
+          # valid build metadata (+build).
+          semver='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)(-((0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*)(\.(0|[1-9][0-9]*|[0-9]*[a-zA-Z-][0-9a-zA-Z-]*))*))?(\+([0-9a-zA-Z-]+(\.[0-9a-zA-Z-]+)*))?$'
+          if ! printf '%s' "$tag" | grep -Eq "$semver"; then
+            echo "tag '$tag' is not a strict SemVer version" >&2
+            exit 1
+          fi
+
+  goreleaser:
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # GoReleaser walks the history to build the changelog.
+          fetch-depth: 0
+      - uses: actions/setup-go@v7
+        with:
+          go-version: "1.25.13"
+      - name: Export build metadata
+        run: |
+          echo "CATALOG_HASH=$(sha256sum internal/hops/catalog.yaml | cut -d' ' -f1)" >> "$GITHUB_ENV"
+      # Pinned: the version identifies the binary that runs, not just the schema.
+      - uses: goreleaser/goreleaser-action@v7
+        with:
+          version: v2.12.7
+          args: release --clean
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  docker:
+    needs: validate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: docker/setup-qemu-action@v4
+      - uses: docker/setup-buildx-action@v4
+      - uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - id: meta
+        uses: docker/metadata-action@v6
+        with:
+          images: ghcr.io/d4rpell/nhi-reach
+          # Only the explicit rule below decides `latest`; without this,
+          # metadata-action auto-tags semver builds (including pre-releases).
+          flavor: latest=false
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
+            type=sha
+      - name: Export build metadata
+        run: |
+          echo "CATALOG_HASH=$(sha256sum internal/hops/catalog.yaml | cut -d' ' -f1)" >> "$GITHUB_ENV"
+          echo "BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+      # Prove the image actually runs before publishing it: a successful build
+      # says nothing about the effective user being able to read the mount or
+      # about the analysis working inside distroless. Built for the runner's own
+      # platform and loaded locally, run once, then the multi-arch push follows.
+      - name: Validate the image (single-arch, loaded)
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64
+          load: true
+          tags: nhi-reach:ci
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ github.sha }}
+            DATE=${{ env.BUILD_DATE }}
+            CATALOG_HASH=${{ env.CATALOG_HASH }}
+      - name: Run the image and analyze a synthetic fixture offline
+        run: |
+          # `nhi-reach version` writes through cobra's OutOrStderr, so capture
+          # both streams.
+          out="$(docker run --rm nhi-reach:ci version 2>&1)"
+          echo "$out"
+          # Assert the injected metadata matches the tag, commit and catalog hash,
+          # so a build that silently lost an -X value fails the release here.
+          grep -q "nhi-reach version ${GITHUB_REF_NAME}$" <<<"$out"
+          grep -q "commit:        ${GITHUB_SHA}$" <<<"$out"
+          grep -q "rules catalog: ${CATALOG_HASH}$" <<<"$out"
+          docker run --rm -v "$PWD/testdata/light/hit:/snap:ro" nhi-reach:ci \
+            analyze --from /snap -o table
+      - uses: docker/build-push-action@v7
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ github.ref_name }}
+            COMMIT=${{ github.sha }}
+            DATE=${{ env.BUILD_DATE }}
+            CATALOG_HASH=${{ env.CATALOG_HASH }}

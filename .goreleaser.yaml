@@ -1,0 +1,68 @@
+version: 2
+
+project_name: nhi-reach
+
+builds:
+  - id: nhi-reach
+    main: ./cmd/nhi-reach
+    binary: nhi-reach
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      # v{{ .Version }} reconstructs the tag for a release (v0.1.0) and keeps the
+      # -dev suffix in snapshots, so `nhi-reach version` matches the archive
+      # names and the Makefile's `git describe` output in both cases.
+      - -X github.com/d4rpell/nhi-reach/internal/version.Version=v{{ .Version }}
+      - -X github.com/d4rpell/nhi-reach/internal/version.Commit={{ .Commit }}
+      - -X github.com/d4rpell/nhi-reach/internal/version.Date={{ .Date }}
+      - -X github.com/d4rpell/nhi-reach/internal/version.CatalogHash={{ .Env.CATALOG_HASH }}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: nhi-reach
+    formats: [tar.gz]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - LICENSE
+      - README.md
+      - THIRD_PARTY_NOTICES.md
+
+checksum:
+  name_template: "{{ .ProjectName }}_{{ .Version }}_checksums.txt"
+  algorithm: sha256
+
+changelog:
+  use: github
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+      - "^Merge"
+
+release:
+  github:
+    owner: d4rpell
+    name: NHI-reach
+  draft: false
+  prerelease: auto
+  # Re-running the release for a tag whose release already exists replaces the
+  # asset with the same name instead of failing on the upload conflict.
+  replace_existing_artifacts: true
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-dev"
