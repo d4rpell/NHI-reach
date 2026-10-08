@@ -1,0 +1,10 @@
+# The system identity of the lab. It is privileged by design (it lives in the
+# kube-system namespace, which kind already creates) and must be an intermediate
+# hop, never an origin by default (D-009). The impersonation ClusterRoleBinding
+# in 02-rbac-cluster.yaml makes it reachable from the application origin, so the
+# report flags any path that crosses it via_system.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: lab-system-ops
+  namespace: kube-system

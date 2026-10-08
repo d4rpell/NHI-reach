@@ -1,0 +1,11 @@
+# Lab namespaces. Application workloads live here; the system identity that the
+# tool must not treat as an origin by default lives in kube-system (D-009).
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab-app
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lab-dev

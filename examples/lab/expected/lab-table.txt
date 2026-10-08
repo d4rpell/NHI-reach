@@ -1,0 +1,19 @@
+target: cluster-admin
+SOURCE            TARGET         HOPS  CONFIDENCE   VIA-SYSTEM  BEST-CUT                                                                                                                ROUTE
+lab-app/deployer  cluster-admin  1     definite     -           remove subject ServiceAccount lab-app/deployer from ClusterRoleBinding deployer-binding-controller (unverified)         lab-app/deployer -[NR-004]-> cluster-admin
+lab-app/deployer  cluster-admin  1     conditional  -           remove subject ServiceAccount lab-app/deployer from ClusterRoleBinding deployer-csr-issuer (unverified)                 lab-app/deployer -[NR-006]-> cluster-admin
+lab-app/deployer  cluster-admin  1     definite     -           remove subject ServiceAccount lab-app/deployer from ClusterRoleBinding deployer-escalator (unverified)                  lab-app/deployer -[NR-005]-> cluster-admin
+lab-app/deployer  cluster-admin  2     definite     yes         remove subject ServiceAccount kube-system/lab-system-ops from ClusterRoleBinding system-ops-cluster-admin (unverified)  lab-app/deployer -[NR-002]-> kube-system/lab-system-ops -[NR-004]-> cluster-admin
+lab-app/deployer  cluster-admin  2     definite     -           remove subject ServiceAccount lab-app/deployer from RoleBinding lab-app/deployer-token-minter (unverified)              lab-app/deployer -[NR-003]-> lab-app/ops-admin -[NR-004]-> cluster-admin
+lab-app/deployer  cluster-admin  2     conditional  -           remove subject ServiceAccount lab-app/deployer from RoleBinding lab-app/deployer-pod-creator (unverified)               lab-app/deployer -[NR-001]-> lab-app/ops-admin -[rbac-cluster-admin]-> cluster-admin
+lab-app/deployer  cluster-admin  2     definite     -           remove subject ServiceAccount lab-app/deployer from RoleBinding lab-app/deployer-token-minter (unverified)              lab-app/deployer -[NR-003]-> lab-app/ops-admin -[rbac-cluster-admin]-> cluster-admin
+lab-app/deployer  cluster-admin  2     conditional  -           remove subject ServiceAccount lab-app/deployer from RoleBinding lab-app/deployer-pod-creator (unverified)               lab-app/deployer -[NR-001]-> lab-app/ops-admin -[NR-004]-> cluster-admin
+target: secrets
+SOURCE            TARGET   HOPS  CONFIDENCE   VIA-SYSTEM  BEST-CUT                                                                                                                ROUTE
+lab-app/deployer  secrets  1     definite     -           remove subject ServiceAccount lab-app/deployer from ClusterRoleBinding deployer-secret-reader (unverified)              lab-app/deployer -[rbac-secret-read]-> secrets
+lab-app/deployer  secrets  2     conditional  -           remove subject ServiceAccount lab-app/deployer from RoleBinding lab-app/deployer-pod-creator (unverified)               lab-app/deployer -[NR-001]-> lab-app/ops-admin -[rbac-secret-read]-> secrets
+lab-app/deployer  secrets  2     definite     -           remove subject ServiceAccount lab-app/deployer from RoleBinding lab-app/deployer-token-minter (unverified)              lab-app/deployer -[NR-003]-> lab-app/ops-admin -[rbac-secret-read]-> secrets
+lab-app/deployer  secrets  2     definite     yes         remove subject ServiceAccount kube-system/lab-system-ops from ClusterRoleBinding system-ops-cluster-admin (unverified)  lab-app/deployer -[NR-002]-> kube-system/lab-system-ops -[rbac-secret-read]-> secrets
+
+gaps:
+  SecurityContextConstraints: snapshot has no securitycontextconstraints; hops that depend on them are not evaluated

@@ -1,0 +1,187 @@
+# Cluster-scoped RBAC of the lab. Every rule is an intentionally misconfigured
+# privilege that one of the embedded catalog hops (internal/hops/catalog.yaml)
+# recognises. The comments name the hop and cite the official documentation that
+# justifies it, so the lab doubles as a readable example of each escalation.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: lab-binding-controller
+rules:
+  # NR-004 (bind verb): bind on ClusterRoles plus create on ClusterRoleBindings
+  # lets the holder grant itself any cluster role, cluster-admin included.
+  # https://kubernetes.io/docs/concepts/security/rbac-good-practices/#bind-verb
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    verbs: ["bind"]
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterrolebindings"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: lab-escalator
+rules:
+  # NR-005 (escalate verb): escalate plus update on ClusterRoles lets the holder
+  # widen any cluster role that already reaches it through an existing binding.
+  # https://kubernetes.io/docs/concepts/security/rbac-good-practices/#escalate-verb
+  - apiGroups: ["rbac.authorization.k8s.io"]
+    resources: ["clusterroles"]
+    verbs: ["escalate", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: lab-app-admin
+rules:
+  # A restricted cluster role, not cluster-admin. It exists so the escalate hop
+  # has a role that already reaches the holder through its binding.
+  - apiGroups: [""]
+    resources: ["configmaps", "serviceaccounts"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: lab-csr-issuer
+rules:
+  # NR-006 (CSR API): create a CSR, update its approval and approve the
+  # kube-apiserver-client signer let the holder obtain a client certificate for a
+  # subject of its choosing. The escalation is only real because a privileged
+  # User/Group is bound to cluster-admin in this lab (lab-admins below).
+  # https://kubernetes.io/docs/concepts/security/rbac-good-practices/#csrs-and-certificate-issuing
+  - apiGroups: ["certificates.k8s.io"]
+    resources: ["certificatesigningrequests"]
+    verbs: ["create"]
+  - apiGroups: ["certificates.k8s.io"]
+    resources: ["certificatesigningrequests/approval"]
+    verbs: ["update"]
+  - apiGroups: ["certificates.k8s.io"]
+    resources: ["signers"]
+    verbs: ["approve"]
+    resourceNames: ["kubernetes.io/kube-apiserver-client"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: lab-system-sa-impersonator
+rules:
+  # NR-002 (impersonate verb) aimed at one system service account only. The
+  # resourceNames pin keeps the lab deterministic: a wildcard impersonation would
+  # reach every service account of the cluster and drown the report in noise.
+  # https://kubernetes.io/docs/concepts/security/rbac-good-practices/#impersonate-verb
+  - apiGroups: [""]
+    resources: ["serviceaccounts"]
+    verbs: ["impersonate"]
+    resourceNames: ["lab-system-ops"]
+---
+# Direct cluster-admin for the application admin: the single-edge finding of
+# spec 2.6. ops-admin is an origin, so this is reported as a one-hop path.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ops-admin-cluster-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: ops-admin
+    namespace: lab-app
+---
+# A privileged User/Group bound to cluster-admin. It is not an origin (only
+# service accounts are), but it is the admissible subject NR-006 needs, and it
+# is the reason NR-006 is a real escalation here.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: lab-admins-cluster-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: Group
+    name: lab-admins
+---
+# The system identity of the lab: privileged by design and only ever an
+# intermediate, never an origin (D-009). Paths that cross it are flagged
+# via_system by the report.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: system-ops-cluster-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: ServiceAccount
+    name: lab-system-ops
+    namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: deployer-binding-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: lab-binding-controller
+subjects:
+  - kind: ServiceAccount
+    name: deployer
+    namespace: lab-app
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: deployer-escalator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: lab-escalator
+subjects:
+  - kind: ServiceAccount
+    name: deployer
+    namespace: lab-app
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: deployer-lab-app-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: lab-app-admin
+subjects:
+  - kind: ServiceAccount
+    name: deployer
+    namespace: lab-app
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: deployer-csr-issuer
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: lab-csr-issuer
+subjects:
+  - kind: ServiceAccount
+    name: deployer
+    namespace: lab-app
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: deployer-system-impersonator
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: lab-system-sa-impersonator
+subjects:
+  - kind: ServiceAccount
+    name: deployer
+    namespace: lab-app

@@ -1,0 +1,18 @@
+# kind cluster configuration for the nhi-reach lab (task T3-01, D-013).
+#
+# One single-node control plane, the API published only on the loopback address
+# and reached over an SSH tunnel. The port is 16444 so it never collides with the
+# sibling ariadne-lab cluster (16443) that may run on the same host.
+#
+# kind has no SecurityContextConstraints API: the SCC part of the lab is a
+# synthetic offline snapshot, not a live cluster (see README.md).
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+networking:
+  apiServerAddress: "127.0.0.1"
+  apiServerPort: 16444
+nodes:
+  - role: control-plane
+    # Pinned by digest so the lab is reproducible and reuses a cached image on
+    # the host instead of pulling a moving tag.
+    image: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5

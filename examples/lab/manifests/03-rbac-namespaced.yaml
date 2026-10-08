@@ -1,0 +1,110 @@
+# Namespaced RBAC of the lab, plus the cluster-wide Secret reader that feeds the
+# secrets goal. Each entry is an intentional misconfiguration recognised by a
+# catalog hop; the comments name the hop and cite its official source.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: lab-pod-creator
+  namespace: lab-app
+rules:
+  # NR-001 (workload creation): create on pods lets the holder run a workload as
+  # any ServiceAccount of the namespace, inheriting that account's access.
+  # https://kubernetes.io/docs/concepts/security/rbac-good-practices/#workload-creation
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["create"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: deployer-pod-creator
+  namespace: lab-app
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: lab-pod-creator
+subjects:
+  - kind: ServiceAccount
+    name: deployer
+    namespace: lab-app
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: lab-token-minter
+  namespace: lab-app
+rules:
+  # NR-003 (token request): create on serviceaccounts/token lets the holder mint
+  # a token for an existing ServiceAccount and authenticate as it. resourceNames
+  # pins the target so the lab stays deterministic.
+  # https://kubernetes.io/docs/concepts/security/rbac-good-practices/#token-request
+  - apiGroups: [""]
+    resources: ["serviceaccounts/token"]
+    verbs: ["create"]
+    resourceNames: ["ops-admin"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: deployer-token-minter
+  namespace: lab-app
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: lab-token-minter
+subjects:
+  - kind: ServiceAccount
+    name: deployer
+    namespace: lab-app
+---
+# The secrets goal (spec 2.5): reading Secrets of a sensitive namespace
+# (kube-system by default). A cluster-scoped grant reaches every sensitive
+# namespace, so this is a one-hop definite finding for the deployer.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: lab-secret-reader
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: deployer-secret-reader
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: lab-secret-reader
+subjects:
+  - kind: ServiceAccount
+    name: deployer
+    namespace: lab-app
+---
+# A grant that reaches no goal: configmaps is not a catalog hop, so the idle
+# account is a subject with permissions that produce no path. It proves the lab
+# does not manufacture findings out of unrelated access.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: lab-configmap-reader
+  namespace: lab-dev
+rules:
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: idle-configmap-reader
+  namespace: lab-dev
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: lab-configmap-reader
+subjects:
+  - kind: ServiceAccount
+    name: idle
+    namespace: lab-dev
